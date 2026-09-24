@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""vllmapp-agent — körs på varje nod som SSH forced command.
+
+Appen i Easypanel når noden med en nyckel som bara får köra det här
+skriptet (authorized_keys: command="~/.local/bin/vllmapp-agent",restrict).
+Kommandot kommer i SSH_ORIGINAL_COMMAND och vitlistas här.
+
+Konfig: ~/.config/vllmapp/agent.env (CLUSTER_DIR=...).
+"""
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+VERSION = "1"
+HOME = os.path.expanduser("~")
+CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
+
+# Filer appen får läsa/skriva i klusterkatalogen (managed-läget)
+WRITABLE = re.compile(r"^(compose\.yaml|entrypoint\.sh|\.env|patches/[A-Za-z0-9_.-]+)$")
+
+# Loggrader som säger något om uppstartsfas eller fel
+SCAN = re.compile(
+    r"Loading safetensors checkpoint shards|Available KV cache memory|GPU KV cache size"
+    r"|Maximum concurrency|Running FlashInfer autotune"
+    r"|Capturing CUDA graph|Graph capturing finished|Application startup complete"
+    r"|Starting vLLM API server|Väntar på|Alla noder uppe"
+    r"|Traceback|RuntimeError|ValueError|Timed out|out of memory|No available memory"
+    r"|ActorDied|ActorHandleNotFound|RayWorkerError|Killed"
+)
+
+
+def conf():
+    c = {"CLUSTER_DIR": os.path.join(HOME, "vllm-cluster")}
+    try:
+        for line in open(CONF):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                c[k.strip()] = os.path.expanduser(v.strip())
+    except FileNotFoundError:
+        pass
+    return c
+
+
+def run(cmd, cwd=None, timeout=60, input=None):
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                       timeout=timeout, input=input)
+    return p.returncode, p.stdout, p.stderr
+
+
+def out(obj):
+    json.dump(obj, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def container(c):
+    """Första containern i compose-projektet i CLUSTER_DIR."""
+    if not os.path.isdir(c["CLUSTER_DIR"]):
+        return None
+    rc, so, _ = run(["docker", "compose", "ps", "-a", "-q"], cwd=c["CLUSTER_DIR"])
+    ids = so.split()
+    return ids[0] if rc == 0 and ids else None
+
+
+def gpu():
+    try:
+        rc, so, _ = run(["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu,power.draw",
+                         "--format=csv,noheader,nounits"], timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if rc != 0 or not so.strip():
+        return None
+    f = [x.strip() for x in so.strip().splitlines()[0].split(",")]
+    num = lambda x: float(x) if re.match(r"^[\d.]+$", x) else None
+    return {"util": num(f[0]), "temp": num(f[1]), "power": num(f[2])}
+
+
+def meminfo():
+    m = {}
+    for line in open("/proc/meminfo"):
+        k, v = line.split(":")
+        m[k] = int(v.split()[0]) * 1024
+    return {"total": m["MemTotal"], "available": m["MemAvailable"]}
+
+
+def can_reboot():
+    rc, _, _ = run(["sudo", "-n", "-l", "/usr/bin/systemctl", "reboot"], timeout=10)
+    return rc == 0
+
+
+def status(c):
+    cid = container(c)
+    info = None
+    if cid:
+        rc, so, _ = run(["docker", "inspect", cid])
+        if rc == 0:
+            d = json.loads(so)[0]
+            info = {
+                "name": d["Name"].lstrip("/"),
+                "state": d["State"]["Status"],
+                "running": d["State"]["Running"],
+                "started_at": d["State"]["StartedAt"],
+                "finished_at": d["State"]["FinishedAt"],
+                "exit_code": d["State"]["ExitCode"],
+                "restarts": d["RestartCount"],
+                "image": d["Config"]["Image"],
+                "image_id": d["Image"],
+            }
+    boot = time.time() - float(open("/proc/uptime").read().split()[0])
+    out({
+        "agent": VERSION,
+        "hostname": os.uname().nodename,
+        "boot_time": boot,
+        "cluster_dir": c["CLUSTER_DIR"],
+        "cluster_dir_exists": os.path.isdir(c["CLUSTER_DIR"]),
+        "can_reboot": can_reboot(),
+        "mem": meminfo(),
+        "gpu": gpu(),
+        "container": info,
+    })
+
+
+def scan(c, since):
+    cid = container(c)
+    if not cid:
+        return out({"lines": [], "last": None})
+    cmd = ["docker", "logs", "--timestamps"]
+    if since:
+        cmd += ["--since", since]
+    p = subprocess.Popen(cmd + [cid], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, errors="replace")
+    lines, last = [], None
+    for line in p.stdout:
+        if "shm_broadcast" in line:
+            continue
+        last = line.rstrip()[:600]
+        if SCAN.search(line):
+            lines.append(last)
+            if len(lines) > 800:
+                lines = lines[-400:]
+    p.wait()
+    out({"lines": lines[-400:], "last": last})
+
+
+def logs(c, n):
+    cid = container(c)
+    if not cid:
+        return out({"lines": []})
+    rc, so, se = run(["docker", "logs", "--timestamps", "--tail", str(n), cid])
+    out({"lines": [l[:600] for l in (so + se).splitlines()[-n:]]})
+
+
+def compose(c, *args, timeout=600):
+    rc, so, se = run(["docker", "compose", *args], cwd=c["CLUSTER_DIR"], timeout=timeout)
+    out({"rc": rc, "out": (so + se)[-4000:]})
+
+
+def reboot():
+    if not can_reboot():
+        return out({"rc": 1, "out": "saknar sudoers-regel för /usr/bin/systemctl reboot"})
+    subprocess.Popen(["sh", "-c", "sleep 2; sudo -n /usr/bin/systemctl reboot"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    out({"rc": 0, "out": "bootar om om 2 s"})
+
+
+def netdetect(ip):
+    """Gränssnittet som har ip, och RoCE-HCA:erna på samma fysiska port."""
+    rc, so, _ = run(["ip", "-o", "-4", "addr"])
+    iface = None
+    for line in so.splitlines():
+        f = line.split()
+        if len(f) > 3 and f[3].split("/")[0] == ip:
+            iface = f[1]
+    port = lambda n: (re.findall(r"p\d+s\d+f\d+", n) or [None])[-1]
+    hcas = []
+    base = "/sys/class/infiniband"
+    if iface and os.path.isdir(base):
+        for dev in sorted(os.listdir(base), key=str.lower):
+            try:
+                nets = os.listdir(os.path.join(base, dev, "device/net"))
+            except OSError:
+                continue
+            if any(n == iface or (port(n) and port(n) == port(iface)) for n in nets):
+                hcas.append(dev)
+    out({"iface": iface, "hcas": hcas})
+
+
+def readfile(c, rel):
+    if not WRITABLE.match(rel):
+        return out({"error": "otillåten fil"})
+    p = os.path.join(c["CLUSTER_DIR"], rel)
+    ok = os.path.exists(p)
+    out({"exists": ok, "content": open(p).read() if ok else ""})
+
+
+def putfile(c, rel):
+    if not WRITABLE.match(rel):
+        return out({"error": "otillåten fil"})
+    p = os.path.join(c["CLUSTER_DIR"], rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    data = sys.stdin.read()
+    if os.path.exists(p):
+        if open(p).read() == data:
+            return out({"rc": 0, "changed": False})
+        os.replace(p, p + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                 0o600 if rel == ".env" else 0o644)
+    with os.fdopen(fd, "w") as f:
+        f.write(data)
+    out({"rc": 0, "changed": True})
+
+
+def main():
+    argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
+    c = conf()
+    cmd, args = (argv[0], argv[1:]) if argv else ("status", [])
+    if cmd == "status":
+        status(c)
+    elif cmd == "scan":
+        since = args[0] if args else None
+        if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
+            return out({"error": "ogiltig tid"})
+        scan(c, since)
+    elif cmd == "logs":
+        logs(c, max(1, min(int(args[0]) if args and args[0].isdigit() else 200, 2000)))
+    elif cmd in ("up", "stop", "restart", "pull"):
+        compose(c, *{"up": ["up", "-d"], "stop": ["stop"],
+                     "restart": ["restart"], "pull": ["pull"]}[cmd],
+                timeout=3600 if cmd == "pull" else 600)
+    elif cmd == "reboot":
+        reboot()
+    elif cmd == "netdetect" and args and re.match(r"^[\d.]+$", args[0]):
+        netdetect(args[0])
+    elif cmd == "read" and args:
+        readfile(c, args[0])
+    elif cmd == "put" and args:
+        putfile(c, args[0])
+    elif cmd == "version":
+        out({"agent": VERSION})
+    else:
+        out({"error": f"okänt kommando: {cmd}"})
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

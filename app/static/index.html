@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vLLM-kluster</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
+  --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --accent: #0969da; --code: #f0f2f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
+          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+       font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+     margin: 0 0 10px; font-weight: 600; }
+.muted { color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+        padding: 14px 16px; margin-bottom: 14px; }
+.hero { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--err); }
+.state { font-size: 22px; font-weight: 650; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px;
+      margin-top: 12px; }
+.kv div b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+.kv div span { font-size: 16px; font-variant-numeric: tabular-nums; }
+.nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.node h3 { margin: 0 0 8px; font-size: 15px; display: flex; gap: 8px; align-items: center; }
+.bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line);
+         background: var(--card); color: var(--fg); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.danger { color: var(--err); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+pre, code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 7px; padding: 10px;
+      overflow: auto; max-height: 360px; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
+.ev { display: grid; grid-template-columns: 76px 1fr; gap: 2px 10px; font-size: 13px; }
+.ev .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ev .error { color: var(--err); } .ev .warn { color: var(--warn); } .ev .ok { color: var(--ok); }
+.warnbox { border-left: 3px solid var(--warn); padding: 6px 10px; margin-top: 10px; }
+.errbox { border-left: 3px solid var(--err); padding: 6px 10px; margin-top: 10px; }
+input[type=text] { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line);
+                   background: var(--bg); color: var(--fg); flex: 1; min-width: 200px; }
+details summary { cursor: pointer; color: var(--accent); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>vLLM-kluster</h1>
+    <span class="muted" id="sub"></span>
+  </header>
+
+  <section class="card">
+    <div class="hero">
+      <div class="dot" id="dot"></div>
+      <div>
+        <div class="state" id="state">…</div>
+        <div class="muted" id="phase"></div>
+      </div>
+    </div>
+    <div class="kv" id="kv"></div>
+    <div id="alerts"></div>
+  </section>
+
+  <section class="card">
+    <h2>Styrning</h2>
+    <div class="btns">
+      <button class="primary" data-a="start">Starta</button>
+      <button data-a="restart">Starta om</button>
+      <button data-a="stop">Stoppa</button>
+      <button data-a="pull">Hämta image</button>
+      <button class="danger" data-a="reboot" id="rebootBtn">Boota om noderna</button>
+      <button data-a="apply" id="applyBtn">Skriv konfig till noderna</button>
+    </div>
+    <div class="muted" id="actionInfo" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Testa modellen</h2>
+    <div class="row">
+      <input type="text" id="prompt" value="Vad är 17*23? Svara bara med talet.">
+      <button id="testBtn">Skicka</button>
+    </div>
+    <div id="testOut"></div>
+  </section>
+
+  <section class="nodes" id="nodes"></section>
+
+  <section class="card">
+    <h2>Händelser</h2>
+    <div class="ev" id="events"></div>
+  </section>
+
+  <section class="card">
+    <h2>Konfiguration</h2>
+    <div id="cfg" class="muted"></div>
+    <details style="margin-top:10px"><summary>Förhandsgranska konfig från env mot noderna</summary>
+      <div id="preview" class="muted" style="margin-top:8px">Laddar…</div></details>
+    <details style="margin-top:10px"><summary>Installera agenten på en ny nod</summary>
+      <p class="muted">Kör på varje nod som användaren appen loggar in som. Den lägger till appens
+        nyckel med <code>restrict</code> och en forced command, så att nyckeln bara kan köra agenten.</p>
+      <pre id="install">Laddar…</pre></details>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const gib = b => b == null ? "–" : (b / 2**30).toFixed(1) + " GiB";
+const dur = s => { if (s == null) return "–"; s = Math.round(s);
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
+  return h ? `${h} h ${m} min` : m ? `${m} min` : `${s} s`; };
+const hhmm = iso => new Date(iso).toLocaleTimeString("sv-SE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+let S = null;
+
+async function refresh() {
+  try {
+    const r = await fetch("api/status");
+    if (!r.ok) throw new Error(r.status + " " + (await r.text()));
+    S = await r.json(); render();
+  } catch (e) { $("#state").textContent = "Appen svarar inte"; $("#phase").textContent = e.message; }
+}
+
+function render() {
+  const c = S.cluster || {}, cfg = S.config;
+  $("#sub").textContent = `${cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · uppdaterad ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
+  const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err" : c.state === "startar" ? "warn" : "err";
+  $("#dot").className = "dot " + cls;
+  $("#state").textContent = c.healthy ? "Svarar" : (c.hung ? "Hänger" : (c.state || "…"));
+  $("#phase").textContent = c.healthy ? `modeller: ${(c.models||[]).join(", ")}`
+    : c.state === "startar" ? `fas: ${c.phase || "okänd"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} sedan start` : "";
+  $("#kv").innerHTML = [
+    ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("sv-SE") + " tokens" : "–"],
+    ["Samtidighet", c.concurrency ? `${c.concurrency.x}x vid ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
+    ["Uptime head-container", dur(c.uptime_s)],
+    ["Image", c.image_mismatch ? "OLIKA på noderna" : "samma på alla"],
+  ].map(([k,v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join("");
+  let a = "";
+  if (c.image_mismatch) a += `<div class="errbox">Noderna kör olika image-ID. Ray kräver identiska byggen.</div>`;
+  if (c.workers_down?.length) a += `<div class="warnbox">Worker utan körande container: ${esc(c.workers_down.join(", "))}</div>`;
+  if (c.hung) a += `<div class="errbox">Uppstarten har pågått längre än ${cfg.hang_timeout_min} min utan svar, eller visar fel.${cfg.auto_recover ? " Auto-recover är på." : ""}</div>`;
+  if (c.errors?.length) a += `<details style="margin-top:10px"><summary>${c.errors.length} felrad(er) sedan start</summary><pre>${esc(c.errors.join("\n"))}</pre></details>`;
+  if (!c.healthy && c.last_log) a += `<details style="margin-top:6px"><summary>Senaste loggrad</summary><pre>${esc(c.last_log)}</pre></details>`;
+  $("#alerts").innerHTML = a;
+
+  const busy = S.action?.name;
+  document.querySelectorAll("[data-a]").forEach(b => b.disabled = !!busy);
+  $("#rebootBtn").disabled = busy || !cfg.allow_reboot;
+  $("#rebootBtn").title = cfg.allow_reboot ? "" : "ALLOW_REBOOT är av";
+  $("#applyBtn").hidden = cfg.mode !== "managed";
+  $("#actionInfo").textContent = busy ? `Pågår: ${busy} (sedan ${hhmm(new Date(S.action.started*1000))})` : "";
+
+  $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
+    const k = n.container, g = n.gpu || {}, m = n.mem || {};
+    const used = m.total ? (m.total - m.available) : null;
+    const st = !n.reachable ? ["err", "nås inte"] : !k ? ["err", "ingen container"]
+      : k.running ? ["ok", k.state] : ["err", `${k.state} (exit ${k.exit_code})`];
+    return `<div class="card node">
+      <h3><span class="dot ${st[0]}"></span>${esc(n.role)} · ${esc(n.host)} <span class="muted">${esc(n.hostname || "")}</span></h3>
+      <div class="kv">
+        <div><b>SSH</b><span>${n.reachable ? n.latency_ms + " ms" : "–"}</span></div>
+        <div><b>Container</b><span>${esc(st[1])}</span></div>
+        <div><b>GPU</b><span>${g.util ?? "–"} % · ${g.temp ?? "–"} °C · ${g.power ?? "–"} W</span>
+          <div class="bar"><i style="width:${g.util||0}%"></i></div></div>
+        <div><b>Minne använt</b><span>${gib(used)} / ${gib(m.total)}</span>
+          <div class="bar"><i style="width:${m.total ? 100*used/m.total : 0}%"></i></div></div>
+        <div><b>Uptime nod</b><span>${n.boot_time ? dur(Date.now()/1000 - n.boot_time) : "–"}</span></div>
+        <div><b>Image-ID</b><span><code>${esc((k?.image_id || "–").replace("sha256:","").slice(0,12))}</code></span></div>
+      </div>
+      ${n.reachable && !n.can_reboot ? `<div class="muted" style="margin-top:8px">Ingen sudoers-regel för reboot på den här noden.</div>` : ""}
+      ${n.error ? `<div class="errbox">${esc(n.error)}</div>` : ""}
+      <details style="margin-top:8px" data-logs="${i}"><summary>Loggar</summary><pre>Laddar…</pre></details>
+    </div>`;
+  }).join("");
+  document.querySelectorAll("[data-logs]").forEach(d => d.addEventListener("toggle", async () => {
+    if (!d.open) return;
+    d.querySelector("pre").textContent = await (await fetch(`api/logs/${d.dataset.logs}?n=300`)).text();
+  }));
+  // Behåll öppna logg-paneler mellan uppdateringar
+  openLogs.forEach(i => { const d = document.querySelector(`[data-logs="${i}"]`); if (d) d.open = true; });
+
+  $("#events").innerHTML = (S.events || []).slice(0, 40).map(e =>
+    `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
+    || `<span></span><span class="muted">Inga händelser än.</span>`;
+  $("#cfg").innerHTML = `Läge <b>${esc(cfg.mode)}</b> · klusterkatalog <code>${esc(cfg.cluster_dir)}</code> · SSH som <code>${esc(cfg.ssh_user)}</code><br>
+    Auto-recover <b>${cfg.auto_recover ? "på" : "av"}</b> (hängning efter ${cfg.hang_timeout_min} min, max ${cfg.max_auto_restarts} omstart(er)${cfg.allow_reboot && cfg.auto_reboot ? ", sedan reboot" : ""}) ·
+    reboot-knapp <b>${cfg.allow_reboot ? "på" : "av"}</b> · automatiska försök hittills: ${cfg.state.attempts}`;
+}
+
+let openLogs = new Set();
+document.addEventListener("toggle", e => {
+  const d = e.target; if (!d.dataset?.logs) return;
+  d.open ? openLogs.add(d.dataset.logs) : openLogs.delete(d.dataset.logs);
+}, true);
+
+const CONFIRM = {
+  stop: "Stoppa klustret? API:et slutar svara.",
+  restart: "Starta om klustret? Uppstarten tar ca 20 minuter.",
+  reboot: "Boota om ALLA noder? Appen går också ner en stund om den kör på head.",
+  apply: "Skriva konfigurationen från env till alla noder? Gamla filer sparas som .bak.",
+};
+document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", async () => {
+  const a = b.dataset.a;
+  if (CONFIRM[a] && !confirm(CONFIRM[a])) return;
+  const r = await fetch(`api/action/${a}`, {method: "POST"});
+  if (!r.ok) alert((await r.json()).detail || r.status);
+  refresh();
+}));
+
+$("#testBtn").addEventListener("click", async () => {
+  const b = $("#testBtn"); b.disabled = true; $("#testOut").innerHTML = `<pre>Väntar på svar…</pre>`;
+  try {
+    const r = await (await fetch("api/test", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt: $("#prompt").value})})).json();
+    $("#testOut").innerHTML = r.ok
+      ? `<pre>${esc(r.answer)}</pre><div class="muted" style="margin-top:6px">${r.seconds} s · ${r.usage?.completion_tokens ?? "?"} tokens ut</div>
+         ${r.reasoning ? `<details><summary>Resonemang</summary><pre>${esc(r.reasoning)}</pre></details>` : ""}`
+      : `<div class="errbox">${esc(r.error)}</div>`;
+  } finally { b.disabled = false; }
+});
+
+document.querySelector("details:has(#preview)").addEventListener("toggle", async e => {
+  if (!e.target.open) return;
+  const p = await (await fetch("api/preview")).json();
+  $("#preview").innerHTML = (p.mode !== "managed" ? `<p>Läge <b>${esc(p.mode)}</b>: appen skriver inte till noderna. Diffen visar vad managed-läget skulle ändra.</p>` : "") +
+    p.nodes.map(n => `<h3 style="font-size:14px;margin:12px 0 0">${esc(n.role)} · ${esc(n.host)}</h3>` +
+      n.files.map(f => `<div style="margin-top:6px"><code>${esc(f.name)}</code> ${f.diff ? "" : "<span class='muted'>– identisk</span>"}
+        ${f.diff ? `<pre>${esc(f.diff)}</pre>` : ""}</div>`).join("")).join("");
+});
+document.querySelector("details:has(#install)").addEventListener("toggle", async e => {
+  if (e.target.open) $("#install").textContent = await (await fetch("api/install")).text();
+});
+
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
