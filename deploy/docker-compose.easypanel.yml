@@ -1,0 +1,16 @@
+# Klistras in som docker-compose.yml i en Easypanel Compose-tjänst (projekt app, tjänst vllmapp).
+# Env sätts i Easypanels Environment-flik; Easypanel skriver dem till .env bredvid filen.
+# Imagen byggs lokalt: cd ~/vllmapp && docker build -t vllmapp:latest .
+services:
+  vllmapp:
+    image: vllmapp:latest
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Appens SSH-nyckel — samma som är installerad i noderna authorized_keys
+      - /home/spark1/vllmapp-data:/data
+    expose:
+      - "8080"
