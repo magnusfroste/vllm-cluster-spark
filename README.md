@@ -61,4 +61,4 @@ docker build -t vllmapp:latest .
 
 I Easypanel: en App-tjänst med imagen `vllmapp:latest`, env enligt tabellen, en volym eller
 bindmount på `/data` och port 8080. Ingen domän behövs om Cloudflare-tunneln pekar på
-`http://<projekt>_<tjänst>:8080`.
+`http://<projekt>_<tjänst>_vllmapp:8080` (compose-tjänst).
