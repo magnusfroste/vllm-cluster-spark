@@ -10,3 +10,11 @@ services:
       - /home/spark1/vllmapp-data:/data
     expose:
       - "8080"
+    networks:
+      default:
+      easypanel:
+        aliases:
+          - vllm_vllmapp_vllmapp
+networks:
+  easypanel:
+    external: true
