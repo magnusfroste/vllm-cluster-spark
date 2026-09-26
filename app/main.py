@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 
 def env(name, default=""):
@@ -550,16 +549,26 @@ def preview():
 
 # ---------- webb ----------
 app = FastAPI(title="vllmapp")
-basic = HTTPBasic(auto_error=False)
-
-
-def auth(creds: HTTPBasicCredentials = Depends(basic)):
+def auth(request: Request):
+    """Basic-auth med UTF-8 (FastAPIs HTTPBasic avkodar ASCII, så å/ä/ö i lösenordet gav alltid 401)."""
     if not ADMIN_PASSWORD:
         raise HTTPException(503, "ADMIN_PASSWORD är inte satt — sätt den i Easypanels env")
-    if not creds or not (secrets.compare_digest(creds.username, ADMIN_USER) and
-                         secrets.compare_digest(creds.password, ADMIN_PASSWORD)):
-        raise HTTPException(401, "fel inloggning", headers={"WWW-Authenticate": 'Basic realm="vllmapp"'})
-    return creds.username
+    user = password = None
+    scheme, _, param = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "basic":
+        raw = base64.b64decode(param + "===")
+        for enc in ("utf-8", "latin-1"):
+            try:
+                user, _, password = raw.decode(enc).partition(":")
+                break
+            except UnicodeDecodeError:
+                continue
+    ok = user is not None and \
+        secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and \
+        secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
+    if not ok:
+        raise HTTPException(401, "fel inloggning", headers={"WWW-Authenticate": 'Basic realm="vllmapp", charset="UTF-8"'})
+    return user
 
 
 @app.get("/healthz")
