@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log · vLLM cluster</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
+  --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --accent: #0969da; --code: #f0f2f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
+          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
+       font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding: 12px 16px;
+         border-bottom: 1px solid var(--line); background: var(--card); }
+header h1 { font-size: 16px; margin: 0; }
+a { color: var(--accent); text-decoration: none; }
+.tabs { display: flex; gap: 4px; }
+.tabs a { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); color: var(--fg); }
+.tabs a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+.ctl label { display: flex; gap: 5px; align-items: center; color: var(--muted); cursor: pointer; }
+input[type=search], select { font: inherit; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line);
+                             background: var(--bg); color: var(--fg); }
+input[type=search] { width: 200px; }
+.wrap { position: relative; flex: 1; min-height: 0; }
+#log { position: absolute; inset: 0; overflow: auto; margin: 0; padding: 8px 16px 12px;
+       background: var(--code); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#log.nowrap .l { white-space: pre; }
+.l { white-space: pre-wrap; word-break: break-all; }
+.l .t { color: var(--muted); user-select: none; margin-right: 8px; }
+.l.error { color: var(--err); } .l.warn { color: var(--warn); } .l.ok { color: var(--ok); }
+#jump { position: absolute; right: 24px; bottom: 18px; display: none; font: inherit; padding: 7px 14px;
+        border-radius: 18px; border: 1px solid var(--accent); background: var(--accent); color: #fff;
+        cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+footer { padding: 5px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
+         background: var(--card); display: flex; gap: 14px; flex-wrap: wrap; }
+.err { color: var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="../">← vLLM cluster</a></h1>
+  <nav class="tabs" id="tabs"></nav>
+  <div class="ctl">
+    <input type="search" id="filter" placeholder="Filter…">
+    <label><input type="checkbox" id="errOnly"> Errors/warnings only</label>
+    <label><input type="checkbox" id="wrap" checked> Wrap</label>
+    <label><input type="checkbox" id="hideReq" checked> Hide health polls</label>
+    <select id="n" title="Lines to load">
+      <option value="500">500 lines</option><option value="2000" selected>2,000 lines</option>
+      <option value="5000">5,000 lines</option>
+    </select>
+  </div>
+</header>
+<div class="wrap">
+  <pre id="log"></pre>
+  <button id="jump">Jump to latest ↓</button>
+</div>
+<footer><span id="count"></span><span id="upd"></span><span id="msg"></span></footer>
+<script>
+const $ = s => document.querySelector(s);
+const idx = Number(location.pathname.split("/").filter(Boolean).pop());
+const ANSI = /\x1b\[[0-9;]*m|\[(?:\d{1,2};?)+m/g;
+const MAX = 10000;
+let lines = [], lastTs = "", follow = true, timer = null, busy = false;
+
+const kind = t => /Traceback|\bERROR\b|Error:|Exception|Timed out|out of memory|failed/i.test(t) ? "error"
+  : /\bWARN(ING)?\b|\bW \d/.test(t) ? "warn"
+  : /Application startup complete|Ray runtime started|All nodes up|Alla noder uppe/.test(t) ? "ok" : "";
+const noise = t => /"GET \/(health|v1\/models) HTTP/.test(t) || /shm_broadcast/.test(t);
+
+function parse(raw) {
+  const i = raw.indexOf(" ");
+  const ts = raw.slice(0, i), text = raw.slice(i + 1).replace(ANSI, "");
+  return {ts, text, kind: kind(text)};
+}
+function visible(l) {
+  if ($("#hideReq").checked && noise(l.text)) return false;
+  if ($("#errOnly").checked && !l.kind.match(/error|warn/)) return false;
+  const f = $("#filter").value.trim().toLowerCase();
+  return !f || l.text.toLowerCase().includes(f);
+}
+function el(l) {
+  const d = document.createElement("div");
+  d.className = "l " + l.kind;
+  const t = document.createElement("span");
+  t.className = "t";
+  const dt = new Date(l.ts);
+  t.textContent = isNaN(dt) ? "" : dt.toLocaleString("en-GB", {month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  d.append(t, l.text);
+  return d;
+}
+function atBottom() { const b = $("#log"); return b.scrollHeight - b.scrollTop - b.clientHeight < 30; }
+function toBottom() { const b = $("#log"); b.scrollTop = b.scrollHeight; }
+function counts() {
+  const shown = $("#log").childElementCount;
+  $("#count").textContent = `${shown.toLocaleString("en-US")} of ${lines.length.toLocaleString("en-US")} lines shown`;
+}
+function renderAll() {
+  const f = document.createDocumentFragment();
+  lines.filter(visible).forEach(l => f.append(el(l)));
+  $("#log").replaceChildren(f);
+  counts();
+  if (follow) toBottom();
+}
+function append(fresh) {
+  lines.push(...fresh);
+  if (lines.length > MAX) { lines = lines.slice(-MAX); return renderAll(); }
+  const f = document.createDocumentFragment();
+  fresh.filter(visible).forEach(l => f.append(el(l)));
+  $("#log").append(f);
+  counts();
+  if (follow) toBottom();
+}
+
+async function load(full) {
+  if (busy) return; busy = true;
+  try {
+    const q = full ? `n=${$("#n").value}` : `n=5000&since=${encodeURIComponent(lastTs)}`;
+    const r = await fetch(`../api/logs/${idx}?${q}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.detail || r.status);
+    document.title = `${d.role} log · vLLM cluster`;
+    let fresh = d.lines.map(parse);
+    if (!full) fresh = fresh.filter(l => l.ts > lastTs);
+    if (fresh.length) lastTs = fresh[fresh.length - 1].ts;
+    if (full) { lines = fresh; renderAll(); } else if (fresh.length) append(fresh);
+    $("#upd").textContent = "updated " + new Date().toLocaleTimeString("en-GB");
+    $("#msg").textContent = "";
+  } catch (e) {
+    $("#msg").innerHTML = `<span class="err">${String(e.message).replace(/</g, "&lt;")}</span>`;
+  } finally { busy = false; }
+}
+
+$("#log").addEventListener("scroll", () => {
+  follow = atBottom();
+  $("#jump").style.display = follow ? "none" : "block";
+});
+$("#jump").addEventListener("click", () => { follow = true; toBottom(); $("#jump").style.display = "none"; });
+["#errOnly", "#hideReq"].forEach(s => $(s).addEventListener("change", renderAll));
+$("#filter").addEventListener("input", renderAll);
+$("#wrap").addEventListener("change", e => { $("#log").classList.toggle("nowrap", !e.target.checked); if (follow) toBottom(); });
+$("#n").addEventListener("change", () => { follow = true; load(true); });
+
+(async () => {
+  try {
+    const s = await (await fetch("../api/status")).json();
+    $("#tabs").innerHTML = s.config.nodes.map((n, i) =>
+      `<a href="${i}" class="${i === idx ? "on" : ""}">${n.role} · ${n.host}</a>`).join("");
+  } catch (e) { /* tabs are a convenience */ }
+  await load(true);
+  timer = setInterval(() => document.hidden || load(false), 3000);
+})();
+</script>
+</body>
+</html>

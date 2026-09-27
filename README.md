@@ -7,9 +7,12 @@ the nvidia runtime and the app's public SSH key.
 - **Status:** health, `/v1/models`, startup phase (loading weights %, KV profiling, autotune,
   CUDA graphs), KV cache and concurrency, error lines since start, GPU, memory, image ID per node
 - **Control:** start, stop, restart (head is stopped, workers restarted, head started),
-  pull image, reboot the nodes, test prompt
-- **Auto-recover:** if startup has not responded after `HANG_TIMEOUT_MIN`, or shows errors after
-  3 min, the app restarts the cluster (at most `MAX_AUTO_RESTARTS` times), and then reboots
+  pull image, reboot the nodes, test prompt. Start and restart first check that RoCE GID 3
+  exists on every node, since NCCL init fails without it
+- **Logs:** one page per node (`/logs/0`, `/logs/1`, …) that follows the log live, with filter
+- **Auto-recover:** if startup logs nothing for `STALL_TIMEOUT_MIN`, has not responded after
+  `HANG_TIMEOUT_MIN`, or shows errors after 3 min, or a ready cluster fails `/health` for
+  `UNHEALTHY_GRACE_MIN`, the app restarts the cluster (at most `MAX_AUTO_RESTARTS` times), and then reboots
   if `ALLOW_REBOOT` and `AUTO_REBOOT` are on (at most once per 6 h)
 - **Managed mode:** the app generates `.env`, `compose.yaml` and `entrypoint.sh` for each node
   from its env and writes them over SSH. Network interface and RoCE HCAs are detected per node.
@@ -44,6 +47,9 @@ sudo chmod 440 /etc/sudoers.d/vllmapp-reboot
 | `CONFIG_MODE` | | `existing` or `managed` |
 | `AUTO_RECOVER` | | `false` |
 | `HANG_TIMEOUT_MIN` | | `40` |
+| `STALL_TIMEOUT_MIN` | | `5` — startup counts as hung when no new log line has arrived for this long |
+| `UNHEALTHY_GRACE_MIN` | | `3` — a cluster that was ready counts as hung after failing `/health` this long |
+| `MEM_WARN_GIB` | | `4` — warn when a node has less free memory than this |
 | `MAX_AUTO_RESTARTS` | | `1` |
 | `ALLOW_REBOOT` / `AUTO_REBOOT` | | `false` / `false` |
 | `VLLM_PORT`, `PORT`, `POLL_SECONDS` | | `8000`, `8080`, `15` |

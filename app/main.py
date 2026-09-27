@@ -57,6 +57,9 @@ ADMIN_PASSWORD = env("ADMIN_PASSWORD")
 PORT = int(env("PORT", "8080"))
 AUTO_RECOVER = envbool("AUTO_RECOVER")
 HANG_TIMEOUT_MIN = float(env("HANG_TIMEOUT_MIN", "40"))
+STALL_TIMEOUT_MIN = float(env("STALL_TIMEOUT_MIN", "5"))  # startup with no new log line
+UNHEALTHY_GRACE_MIN = float(env("UNHEALTHY_GRACE_MIN", "3"))  # was ready, stopped answering
+MEM_WARN_GIB = float(env("MEM_WARN_GIB", "4"))
 MAX_AUTO_RESTARTS = int(env("MAX_AUTO_RESTARTS", "1"))
 ALLOW_REBOOT = envbool("ALLOW_REBOOT")
 AUTO_REBOOT = envbool("AUTO_REBOOT")
@@ -87,6 +90,12 @@ def redact(text):
 
 def now():
     return time.time()
+
+
+def dur(sec):
+    sec = int(sec)
+    return f"{sec // 3600} h {sec % 3600 // 60} min" if sec >= 3600 else \
+        f"{sec // 60} min" if sec >= 60 else f"{sec} s"
 
 
 def iso(ts):
@@ -184,6 +193,7 @@ ERRORS = re.compile(r"Traceback|RuntimeError|ValueError|Timed out|out of memory|
 IGNORE_ERRORS = re.compile(r"RuntimeError: cancelled")
 
 STATUS = {"updated": 0, "nodes": [], "cluster": {}}
+UNHEALTHY_SINCE = None
 _action_lock = threading.Lock()
 CURRENT_ACTION = {"name": None, "started": 0}
 
@@ -256,6 +266,10 @@ def poll_once():
     image_ids = {n.get("container", {}).get("image_id") for n in nodes
                  if n.get("container")}
     uptime = now() - started if started else None
+    last_ts = parse_ts((scan.get("last") or "").split(" ", 1)[0])
+    stall = now() - last_ts if last_ts else None
+    roce_bad = [{"role": n["role"], "host": n["host"], "hca": r["hca"], "iface": r["iface"]}
+                for n in nodes for r in (n.get("roce") or []) if not r["ok"]]
 
     if healthy:
         state = "ready"
@@ -265,10 +279,23 @@ def poll_once():
         state = "no container"
     elif not hc.get("running"):
         state = "stopped"
+    elif phase == "ready":
+        state = "not responding"
     else:
         state = "starting"
-    hung = (state == "starting" and uptime is not None and
-            (uptime > HANG_TIMEOUT_MIN * 60 or (errs and uptime > 180)))
+
+    global UNHEALTHY_SINCE
+    UNHEALTHY_SINCE = None if state != "not responding" else (UNHEALTHY_SINCE or now())
+    hung = None
+    if state == "starting" and uptime is not None:
+        if uptime > HANG_TIMEOUT_MIN * 60:
+            hung = f"startup has run for {dur(uptime)} without responding"
+        elif errs and uptime > 180:
+            hung = f"startup shows {len(errs)} error line(s)"
+        elif stall and stall > STALL_TIMEOUT_MIN * 60 and uptime > STALL_TIMEOUT_MIN * 60:
+            hung = f"no new log line for {dur(stall)} (phase: {phase or 'unknown'})"
+    elif state == "not responding" and now() - UNHEALTHY_SINCE > UNHEALTHY_GRACE_MIN * 60:
+        hung = f"was ready, has not answered /health for {dur(now() - UNHEALTHY_SINCE)}"
 
     STATUS.update({
         "updated": now(),
@@ -284,7 +311,12 @@ def poll_once():
             "errors": [redact(e) for e in errs[-15:]],
             "last_log": redact(scan.get("last")),
             "uptime_s": uptime,
+            "log_silent_s": stall,
             "hung": bool(hung),
+            "hung_reason": hung,
+            "roce_bad": roce_bad,
+            "mem_low": [n["host"] for n in nodes
+                        if (n.get("mem") or {}).get("available", 1 << 62) < MEM_WARN_GIB * 2**30],
             "image_mismatch": len(image_ids) > 1,
             "workers_down": [n["host"] for n in nodes[1:]
                              if not (n.get("container") or {}).get("running")],
@@ -305,16 +337,22 @@ def auto_recover():
         return
     if not AUTO_RECOVER or not c.get("hung") or CURRENT_ACTION["name"]:
         return
-    if now() - s["last_action"] < HANG_TIMEOUT_MIN * 60:
+    if now() - s["last_action"] < max(STALL_TIMEOUT_MIN, 5) * 60:
+        return
+    if c.get("roce_bad"):
+        if s.get("gave_up", 0) <= s["last_action"]:
+            event(f"cluster is hung and RoCE GID 3 is missing ({roce_text(c['roce_bad'])}) "
+                  "— a restart won't help, the link needs resetting (sudo)", "error")
+            s["gave_up"] = now()
+            save_state(s)
         return
     if s["attempts"] < MAX_AUTO_RESTARTS:
-        event(f"hang detected (phase: {c.get('phase')}, errors: {len(c.get('errors', []))}) "
-              "— restarting the cluster automatically", "warn")
+        event(f"hang detected: {c.get('hung_reason')} — restarting the cluster automatically", "warn")
         start_action("restart", auto=True)
     elif ALLOW_REBOOT and AUTO_REBOOT and now() - s["last_reboot"] > 6 * 3600:
         event("restart did not help — rebooting the nodes automatically", "warn")
         start_action("reboot", auto=True)
-    elif s.get("gave_up", 0) < s["last_action"]:
+    elif s.get("gave_up", 0) <= s["last_action"]:
         event("cluster is hung and automation has given up — needs a human", "error")
         s["gave_up"] = now()
         save_state(s)
@@ -344,7 +382,34 @@ def on_nodes(nodes, cmd, timeout=600):
     return ok
 
 
+def roce_text(bad):
+    return ", ".join(f"{b['role']} {b['host']} {b['hca']}" for b in bad)
+
+
+def roce_fix(bad):
+    """Commands that bring the GID back: reconnecting the device re-adds it."""
+    out = []
+    for host in dict.fromkeys(b["host"] for b in bad):
+        ifs = " ".join(b["iface"] for b in bad if b["host"] == host and b["iface"])
+        out.append(f"# on {host}, over a different network than the link itself\n"
+                   f"for i in {ifs}; do sudo nmcli dev disconnect $i; sudo nmcli dev connect $i; done")
+    return "\n".join(out)
+
+
+def preflight():
+    """RoCE GID 3 must exist on every node, otherwise NCCL init fails with 'unhandled system error'."""
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        res = list(ex.map(lambda n: (n, ssh(n["host"], "roce", timeout=20)[1]), NODES))
+    bad = [{"role": n["role"], "host": n["host"], "hca": r["hca"], "iface": r["iface"]}
+           for n, r in res for r in ((r or {}).get("roce") or []) if not r["ok"]]
+    if bad:
+        raise RuntimeError(f"RoCE GID 3 missing on {roce_text(bad)} — NCCL would fail. Fix:\n"
+                           + roce_fix(bad))
+    event("preflight: RoCE GID 3 present on all nodes", "ok")
+
+
 def do_start():
+    preflight()
     on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
@@ -355,6 +420,7 @@ def do_stop():
 
 
 def do_restart():
+    preflight()
     on_nodes(NODES[:1], "stop")
     on_nodes(NODES[1:], "restart")
     on_nodes(NODES[:1], "up")
@@ -590,6 +656,8 @@ def api_status():
                 "served_model_name": SERVED_MODEL_NAME, "port": VLLM_PORT,
                 "auto_recover": AUTO_RECOVER, "hang_timeout_min": HANG_TIMEOUT_MIN,
                 "max_auto_restarts": MAX_AUTO_RESTARTS, "allow_reboot": ALLOW_REBOOT,
+                "stall_timeout_min": STALL_TIMEOUT_MIN, "unhealthy_grace_min": UNHEALTHY_GRACE_MIN,
+                "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "auto_reboot": AUTO_REBOOT, "state": load_state()},
             "pubkey": pubkey()}
 
@@ -628,12 +696,21 @@ async def api_test(request: Request):
             "usage": d.get("usage")}
 
 
+@app.get("/logs/{idx}", dependencies=[Depends(auth)])
+def logs_page(idx: int):
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static/logs.html"))
+
+
 @app.get("/api/logs/{idx}", dependencies=[Depends(auth)])
-def api_logs(idx: int, n: int = 300):
+def api_logs(idx: int, n: int = 500, since: str = ""):
     if not 0 <= idx < len(NODES):
         raise HTTPException(404)
-    rc, res, err = ssh(NODES[idx]["host"], f"logs {max(1, min(n, 2000))}", timeout=60)
-    return PlainTextResponse(redact("\n".join((res or {}).get("lines", [])) or err))
+    if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
+        raise HTTPException(400, "invalid since")
+    rc, res, err = ssh(NODES[idx]["host"], f"logs {max(1, min(n, 5000))} {since}".strip(), timeout=60)
+    if res is None or "error" in res:
+        return JSONResponse({"error": redact(str((res or {}).get("error") or err))[-500:]}, 502)
+    return {**NODES[idx], "idx": idx, "lines": [redact(l) for l in res.get("lines", [])]}
 
 
 @app.get("/api/preview", dependencies=[Depends(auth)])

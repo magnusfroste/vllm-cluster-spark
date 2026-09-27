@@ -18,6 +18,12 @@ body { margin: 0; background: var(--bg); color: var(--fg);
        font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
 header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+header nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+a { color: var(--accent); text-decoration: none; }
+a.btn { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); }
+a.btn:hover { border-color: var(--accent); }
+.lastlog { margin-top: 10px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
      margin: 0 0 10px; font-weight: 600; }
@@ -62,6 +68,7 @@ details summary { cursor: pointer; color: var(--accent); }
   <header>
     <h1>vLLM cluster</h1>
     <span class="muted" id="sub"></span>
+    <nav id="lognav"></nav>
   </header>
 
   <section class="card">
@@ -137,11 +144,13 @@ async function refresh() {
 function render() {
   const c = S.cluster || {}, cfg = S.config;
   $("#sub").textContent = `${cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · updated ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
-  const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err" : c.state === "starting" ? "warn" : "err";
+  const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err"
+    : ["starting", "not responding"].includes(c.state) ? "warn" : "err";
   $("#dot").className = "dot " + cls;
   $("#state").textContent = c.healthy ? "Responding" : (c.hung ? "Hung" : (c.state || "…"));
   $("#phase").textContent = c.healthy ? `models: ${(c.models||[]).join(", ")}`
-    : c.state === "starting" ? `phase: ${c.phase || "unknown"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} since start` : "";
+    : c.state === "starting" ? `phase: ${c.phase || "unknown"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} since start`
+      + (c.log_silent_s > 60 ? ` · last log line ${dur(c.log_silent_s)} ago` : "") : "";
   $("#kv").innerHTML = [
     ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("en-US") + " tokens" : "–"],
     ["Concurrency", c.concurrency ? `${c.concurrency.x}x at ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
@@ -151,9 +160,14 @@ function render() {
   let a = "";
   if (c.image_mismatch) a += `<div class="errbox">The nodes run different image IDs. Ray requires identical builds.</div>`;
   if (c.workers_down?.length) a += `<div class="warnbox">Worker without a running container: ${esc(c.workers_down.join(", "))}</div>`;
-  if (c.hung) a += `<div class="errbox">Startup has run longer than ${cfg.hang_timeout_min} min without responding, or shows errors.${cfg.auto_recover ? " Auto-recover is on." : ""}</div>`;
+  if (c.hung) a += `<div class="errbox">Hung: ${esc(c.hung_reason)}.${cfg.auto_recover ? " Auto-recover is on." : ""}</div>`;
+  if (c.roce_bad?.length) a += `<div class="errbox">RoCE GID 3 is missing on ${esc(c.roce_bad.map(b => `${b.role} ${b.hca}`).join(", "))}.
+    NCCL init will fail with "unhandled system error" until the link is reset. Start and restart are blocked. Run with sudo:
+    <pre>${esc(cfg.roce_fix)}</pre></div>`;
+  if (c.mem_low?.length) a += `<div class="warnbox">Low free memory on ${esc(c.mem_low.join(", "))}. The kernel OOM killer may start killing services.</div>`;
   if (c.errors?.length) a += `<details style="margin-top:10px"><summary>${c.errors.length} error line(s) since start</summary><pre>${esc(c.errors.join("\n"))}</pre></details>`;
-  if (!c.healthy && c.last_log) a += `<details style="margin-top:6px"><summary>Last log line</summary><pre>${esc(c.last_log)}</pre></details>`;
+  if (!c.healthy && c.last_log) a += `<div class="lastlog" title="${esc(c.last_log)}"><a href="logs/0">head log →</a> ${esc(c.last_log.replace(/^\S+ /, "").replace(/\x1b\[[0-9;]*m|\[(?:\d{1,2};?)+m/g, ""))}</div>`;
+  $("#lognav").innerHTML = (cfg.nodes || []).map((n, i) => `<a class="btn" href="logs/${i}">${esc(n.role)} log</a>`).join("");
   $("#alerts").innerHTML = a;
 
   const busy = S.action?.name;
@@ -166,6 +180,7 @@ function render() {
   $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
     const k = n.container, g = n.gpu || {}, m = n.mem || {};
     const used = m.total ? (m.total - m.available) : null;
+    const roce = n.roce || [], roceOk = roce.filter(r => r.ok).length;
     const st = !n.reachable ? ["err", "unreachable"] : !k ? ["err", "no container"]
       : k.running ? ["ok", k.state] : ["err", `${k.state} (exit ${k.exit_code})`];
     return `<div class="card node">
@@ -175,36 +190,27 @@ function render() {
         <div><b>Container</b><span>${esc(st[1])}</span></div>
         <div><b>GPU</b><span>${g.util ?? "–"} % · ${g.temp ?? "–"} °C · ${g.power ?? "–"} W</span>
           <div class="bar"><i style="width:${g.util||0}%"></i></div></div>
-        <div><b>Memory used</b><span>${gib(used)} / ${gib(m.total)}</span>
+        <div><b>Memory used</b><span>${gib(used)} / ${gib(m.total)} · ${gib(m.available)} free</span>
           <div class="bar"><i style="width:${m.total ? 100*used/m.total : 0}%"></i></div></div>
         <div><b>Node uptime</b><span>${n.boot_time ? dur(Date.now()/1000 - n.boot_time) : "–"}</span></div>
+        <div><b>RoCE GID 3</b><span style="color:var(--${roce.length && roceOk === roce.length ? "ok" : "err"})">${
+          !roce.length ? "–" : roceOk === roce.length ? `ok (${roceOk}/${roce.length})` : `MISSING (${roceOk}/${roce.length} ok)`}</span></div>
         <div><b>Image-ID</b><span><code>${esc((k?.image_id || "–").replace("sha256:","").slice(0,12))}</code></span></div>
       </div>
       ${n.reachable && !n.can_reboot ? `<div class="muted" style="margin-top:8px">No sudoers rule for reboot on this node.</div>` : ""}
       ${n.error ? `<div class="errbox">${esc(n.error)}</div>` : ""}
-      <details style="margin-top:8px" data-logs="${i}"><summary>Logs</summary><pre>Loading…</pre></details>
+      <div style="margin-top:8px"><a href="logs/${i}">Open log →</a></div>
     </div>`;
   }).join("");
-  document.querySelectorAll("[data-logs]").forEach(d => d.addEventListener("toggle", async () => {
-    if (!d.open) return;
-    d.querySelector("pre").textContent = await (await fetch(`api/logs/${d.dataset.logs}?n=300`)).text();
-  }));
-  // Keep open log panels open across refreshes
-  openLogs.forEach(i => { const d = document.querySelector(`[data-logs="${i}"]`); if (d) d.open = true; });
 
   $("#events").innerHTML = (S.events || []).slice(0, 40).map(e =>
     `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
     || `<span></span><span class="muted">No events yet.</span>`;
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
-    Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang after ${cfg.hang_timeout_min} min, max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
+    Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
     reboot button <b>${cfg.allow_reboot ? "on" : "off"}</b> · automatic attempts so far: ${cfg.state.attempts}`;
 }
 
-let openLogs = new Set();
-document.addEventListener("toggle", e => {
-  const d = e.target; if (!d.dataset?.logs) return;
-  d.open ? openLogs.add(d.dataset.logs) : openLogs.delete(d.dataset.logs);
-}, true);
 
 const CONFIRM = {
   stop: "Stop the cluster? The API will stop responding.",

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "1"
+VERSION = "2"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -118,6 +118,7 @@ def status(c):
         "cluster_dir": c["CLUSTER_DIR"],
         "cluster_dir_exists": os.path.isdir(c["CLUSTER_DIR"]),
         "can_reboot": can_reboot(),
+        "roce": roce(c),
         "mem": meminfo(),
         "gpu": gpu(),
         "container": info,
@@ -146,12 +147,53 @@ def scan(c, since):
     out({"lines": lines[-400:], "last": last})
 
 
-def logs(c, n):
+def logs(c, n, since=None):
     cid = container(c)
     if not cid:
         return out({"lines": []})
-    rc, so, se = run(["docker", "logs", "--timestamps", "--tail", str(n), cid])
-    out({"lines": [l[:600] for l in (so + se).splitlines()[-n:]]})
+    cmd = ["docker", "logs", "--timestamps", "--tail", str(n)]
+    if since:
+        cmd += ["--since", since]
+    rc, so, se = run(cmd + [cid])
+    # stdout and stderr arrive separately; the timestamps put them back in order
+    lines = sorted((so + se).splitlines(), key=lambda l: l[:35])
+    out({"lines": [l[:2000] for l in lines[-n:]]})
+
+
+def roce(c):
+    """RoCE v2 GID on index 3 (NCCL_IB_GID_INDEX) for the HCAs in the cluster's .env,
+    or for all active ports. An empty GID after a link flap makes NCCL init fail."""
+    base = "/sys/class/infiniband"
+    if not os.path.isdir(base):
+        return None
+    want = []
+    try:
+        for line in open(os.path.join(c["CLUSTER_DIR"], ".env")):
+            if line.startswith("IB_HCA="):
+                want = [h.strip() for h in line.split("=", 1)[1].split(",") if h.strip()]
+    except OSError:
+        pass
+    res = []
+    for dev in sorted(os.listdir(base), key=str.lower):
+        d = os.path.join(base, dev)
+        state = (read(d + "/ports/1/state") or "").split(":")[-1].strip()
+        if want and dev not in want or not want and state != "ACTIVE":
+            continue
+        gid = read(d + "/ports/1/gids/3") or ""
+        try:
+            nets = os.listdir(d + "/device/net")
+        except OSError:
+            nets = []
+        res.append({"hca": dev, "state": state, "iface": nets[0] if nets else None,
+                    "gid3": gid, "ok": state == "ACTIVE" and bool(gid.strip("0:"))})
+    return res
+
+
+def read(p):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return None
 
 
 def compose(c, *args, timeout=600):
@@ -165,7 +207,7 @@ def reboot():
     subprocess.Popen(["sh", "-c", "sleep 2; sudo -n /usr/bin/systemctl reboot"],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
-    out({"rc": 0, "out": "bootar om om 2 s"})
+    out({"rc": 0, "out": "rebooting in 2 s"})
 
 
 def netdetect(ip):
@@ -224,10 +266,15 @@ def main():
     elif cmd == "scan":
         since = args[0] if args else None
         if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
-            return out({"error": "ogiltig tid"})
+            return out({"error": "invalid time"})
         scan(c, since)
     elif cmd == "logs":
-        logs(c, max(1, min(int(args[0]) if args and args[0].isdigit() else 200, 2000)))
+        since = args[1] if len(args) > 1 else None
+        if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
+            return out({"error": "invalid time"})
+        logs(c, max(1, min(int(args[0]) if args and args[0].isdigit() else 200, 5000)), since)
+    elif cmd == "roce":
+        out({"roce": roce(c)})
     elif cmd in ("up", "stop", "restart", "pull"):
         compose(c, *{"up": ["up", "-d"], "stop": ["stop"],
                      "restart": ["restart"], "pull": ["pull"]}[cmd],
