@@ -3,6 +3,11 @@
 # ROLE=worker: ansluter till head och blockerar
 set -euo pipefail
 
+# Kör FlashInfer-autotunen från noll varje start. Med en sparad cache träffar
+# rankerna olika och hamnar i otakt: gloo-väntan på den ena, NCCL-väntan på den
+# andra, och timeout efter 30 min (23–27/9). Utan cache tar tuningen ~1 min.
+rm -rf /root/.cache/vllm/flashinfer_autotune_cache
+
 if [ "$ROLE" = "worker" ]; then
   until ray start --block --address="${HEAD_IP}:6379" --node-ip-address="${HOST_IP}"; do
     echo "Väntar på head ${HEAD_IP}..."; sleep 5
