@@ -59,6 +59,11 @@ Managed mode only: `VLLM_IMAGE` (preferably pinned to a digest), `MODEL`, `TP_SI
 `HF_CACHE_DIR`, `EXTRA_MOUNTS` (comma-separated `src:dst`, relative to the cluster dir,
 mounted `:ro`), and the optional overrides `IF_NAMES` / `IB_HCAS` (`;`-separated in node order).
 
+Model-specific patches don't go in the env. Put them in `compose.override.yaml` in the cluster
+dir on each node, next to `patches/` (see `cluster/compose.override.yaml`). Docker Compose merges
+that file into `compose.yaml` by itself, and managed mode never overwrites it. `EXTRA_MOUNTS` is
+for the odd single mount.
+
 ## Deploy in Easypanel
 
 Create an **App** service (not Compose) in the head node's Easypanel:

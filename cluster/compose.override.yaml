@@ -1,0 +1,14 @@
+# Model-specific patches. Docker Compose merges this file into compose.yaml by itself.
+# vllmapp's managed mode writes compose.yaml but never this file, so the patches stay here
+# next to patches/ instead of in the app's env.
+services:
+  vllm:
+    volumes:
+      # Let ModelOpt find the MXFP8 scheme for GLM5-next's fused KDA projection
+      - ./patches/modelopt.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/modelopt.py:ro
+      - ./patches/kda.py:/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/kda.py:ro
+      - ./patches/model.py:/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/model.py:ro
+      - ./patches/workspace.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/workspace.py:ro
+      # Dense mode: sparse indexer off, so TRITON_MLA can be used instead of
+      # FLASHINFER_MLA_SPARSE_SM120 (which needs fp8_ds_mla + pe_dim 64).
+      - ./patches/config.json:/root/.cache/huggingface/hub/models--local-inference-lab--GLM-5.3-Flash-NVFP4-Spark/snapshots/a608241037e4c2565356bff7ca293f2133888f88/config.json:ro
