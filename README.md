@@ -52,19 +52,33 @@ sudo chmod 440 /etc/sudoers.d/vllmapp-reboot
 | `MEM_WARN_GIB` | | `4` — warn when a node has less free memory than this |
 | `MAX_AUTO_RESTARTS` | | `1` |
 | `ALLOW_REBOOT` / `AUTO_REBOOT` | | `false` / `false` |
-| `VLLM_PORT`, `PORT`, `POLL_SECONDS` | | `8000`, `8080`, `15` |
+| `VLLM_PORT`, `PORT`, `POLL_SECONDS` | | `8000`, `8080`, `15` (Easypanel sets `PORT=80` itself; leave it) |
 
 Managed mode only: `VLLM_IMAGE` (preferably pinned to a digest), `MODEL`, `TP_SIZE`
 (default: number of nodes), `GPU_MEM_UTIL`, `MAX_MODEL_LEN`, `VLLM_EXTRA_ARGS`, `HF_TOKEN`,
 `HF_CACHE_DIR`, `EXTRA_MOUNTS` (comma-separated `src:dst`, relative to the cluster dir,
 mounted `:ro`), and the optional overrides `IF_NAMES` / `IB_HCAS` (`;`-separated in node order).
 
-## Build and run
+## Deploy in Easypanel
+
+Create an **App** service (not Compose) in the head node's Easypanel:
+
+- **Source:** GitHub, this repo, branch `main`, build path `/`. The Dockerfile is in the root.
+- **Environment:** as in the table above.
+- **Mounts:** a bind mount from a host directory (for example `/home/spark1/vllmapp-data`) to
+  `/data`. It holds the app's SSH key, so it must survive redeploys: without it the app creates
+  a new key that the nodes' `authorized_keys` don't know.
+- **Port:** Easypanel sets `PORT=80` and the app listens on it.
+
+Only run one vllmapp instance per cluster, since each one does auto-recover on its own.
+
+The service is reachable in the Easypanel network as `http://<project>_<service>:80`, for example
+`http://vllm_vllmapp:80`. No Easypanel domain is needed if a Cloudflare tunnel running inside
+Easypanel points there. The host's own `cloudflared` can't resolve Docker service names.
+
+To build and run it outside Easypanel:
 
 ```bash
 docker build -t vllmapp:latest .
+docker run -d --name vllmapp -p 8080:8080 --env-file .env -v ~/vllmapp-data:/data vllmapp:latest
 ```
-
-In Easypanel: an App service with the image `vllmapp:latest`, env as in the table, a volume or
-bind mount on `/data` and port 8080. No domain is needed if the Cloudflare tunnel points at
-`http://<project>_<service>_vllmapp:8080` (compose service).
