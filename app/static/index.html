@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="sv">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vLLM-kluster</title>
+<title>vLLM cluster</title>
 <style>
 :root {
   --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
@@ -60,7 +60,7 @@ details summary { cursor: pointer; color: var(--accent); }
 <body>
 <main>
   <header>
-    <h1>vLLM-kluster</h1>
+    <h1>vLLM cluster</h1>
     <span class="muted" id="sub"></span>
   </header>
 
@@ -77,23 +77,23 @@ details summary { cursor: pointer; color: var(--accent); }
   </section>
 
   <section class="card">
-    <h2>Styrning</h2>
+    <h2>Control</h2>
     <div class="btns">
-      <button class="primary" data-a="start">Starta</button>
-      <button data-a="restart">Starta om</button>
-      <button data-a="stop">Stoppa</button>
-      <button data-a="pull">Hämta image</button>
-      <button class="danger" data-a="reboot" id="rebootBtn">Boota om noderna</button>
-      <button data-a="apply" id="applyBtn">Skriv konfig till noderna</button>
+      <button class="primary" data-a="start">Start</button>
+      <button data-a="restart">Restart</button>
+      <button data-a="stop">Stop</button>
+      <button data-a="pull">Pull image</button>
+      <button class="danger" data-a="reboot" id="rebootBtn">Reboot nodes</button>
+      <button data-a="apply" id="applyBtn">Write config to nodes</button>
     </div>
     <div class="muted" id="actionInfo" style="margin-top:8px"></div>
   </section>
 
   <section class="card">
-    <h2>Testa modellen</h2>
+    <h2>Test the model</h2>
     <div class="row">
-      <input type="text" id="prompt" value="Vad är 17*23? Svara bara med talet.">
-      <button id="testBtn">Skicka</button>
+      <input type="text" id="prompt" value="What is 17*23? Answer with the number only.">
+      <button id="testBtn">Send</button>
     </div>
     <div id="testOut"></div>
   </section>
@@ -101,19 +101,19 @@ details summary { cursor: pointer; color: var(--accent); }
   <section class="nodes" id="nodes"></section>
 
   <section class="card">
-    <h2>Händelser</h2>
+    <h2>Events</h2>
     <div class="ev" id="events"></div>
   </section>
 
   <section class="card">
-    <h2>Konfiguration</h2>
+    <h2>Configuration</h2>
     <div id="cfg" class="muted"></div>
-    <details style="margin-top:10px"><summary>Förhandsgranska konfig från env mot noderna</summary>
-      <div id="preview" class="muted" style="margin-top:8px">Laddar…</div></details>
-    <details style="margin-top:10px"><summary>Installera agenten på en ny nod</summary>
-      <p class="muted">Kör på varje nod som användaren appen loggar in som. Den lägger till appens
-        nyckel med <code>restrict</code> och en forced command, så att nyckeln bara kan köra agenten.</p>
-      <pre id="install">Laddar…</pre></details>
+    <details style="margin-top:10px"><summary>Preview config from env against the nodes</summary>
+      <div id="preview" class="muted" style="margin-top:8px">Loading…</div></details>
+    <details style="margin-top:10px"><summary>Install the agent on a new node</summary>
+      <p class="muted">Run on each node as the user the app logs in as. It adds the app's
+        key with <code>restrict</code> and a forced command, so the key can only run the agent.</p>
+      <pre id="install">Loading…</pre></details>
   </section>
 </main>
 <script>
@@ -123,7 +123,7 @@ const gib = b => b == null ? "–" : (b / 2**30).toFixed(1) + " GiB";
 const dur = s => { if (s == null) return "–"; s = Math.round(s);
   const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
   return h ? `${h} h ${m} min` : m ? `${m} min` : `${s} s`; };
-const hhmm = iso => new Date(iso).toLocaleTimeString("sv-SE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+const hhmm = iso => new Date(iso).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
 let S = null;
 
 async function refresh() {
@@ -131,42 +131,42 @@ async function refresh() {
     const r = await fetch("api/status");
     if (!r.ok) throw new Error(r.status + " " + (await r.text()));
     S = await r.json(); render();
-  } catch (e) { $("#state").textContent = "Appen svarar inte"; $("#phase").textContent = e.message; }
+  } catch (e) { $("#state").textContent = "App not responding"; $("#phase").textContent = e.message; }
 }
 
 function render() {
   const c = S.cluster || {}, cfg = S.config;
-  $("#sub").textContent = `${cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · uppdaterad ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
-  const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err" : c.state === "startar" ? "warn" : "err";
+  $("#sub").textContent = `${cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · updated ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
+  const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err" : c.state === "starting" ? "warn" : "err";
   $("#dot").className = "dot " + cls;
-  $("#state").textContent = c.healthy ? "Svarar" : (c.hung ? "Hänger" : (c.state || "…"));
-  $("#phase").textContent = c.healthy ? `modeller: ${(c.models||[]).join(", ")}`
-    : c.state === "startar" ? `fas: ${c.phase || "okänd"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} sedan start` : "";
+  $("#state").textContent = c.healthy ? "Responding" : (c.hung ? "Hung" : (c.state || "…"));
+  $("#phase").textContent = c.healthy ? `models: ${(c.models||[]).join(", ")}`
+    : c.state === "starting" ? `phase: ${c.phase || "unknown"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} since start` : "";
   $("#kv").innerHTML = [
-    ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("sv-SE") + " tokens" : "–"],
-    ["Samtidighet", c.concurrency ? `${c.concurrency.x}x vid ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
-    ["Uptime head-container", dur(c.uptime_s)],
-    ["Image", c.image_mismatch ? "OLIKA på noderna" : "samma på alla"],
+    ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("en-US") + " tokens" : "–"],
+    ["Concurrency", c.concurrency ? `${c.concurrency.x}x at ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
+    ["Head container uptime", dur(c.uptime_s)],
+    ["Image", c.image_mismatch ? "DIFFERS between nodes" : "same on all"],
   ].map(([k,v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join("");
   let a = "";
-  if (c.image_mismatch) a += `<div class="errbox">Noderna kör olika image-ID. Ray kräver identiska byggen.</div>`;
-  if (c.workers_down?.length) a += `<div class="warnbox">Worker utan körande container: ${esc(c.workers_down.join(", "))}</div>`;
-  if (c.hung) a += `<div class="errbox">Uppstarten har pågått längre än ${cfg.hang_timeout_min} min utan svar, eller visar fel.${cfg.auto_recover ? " Auto-recover är på." : ""}</div>`;
-  if (c.errors?.length) a += `<details style="margin-top:10px"><summary>${c.errors.length} felrad(er) sedan start</summary><pre>${esc(c.errors.join("\n"))}</pre></details>`;
-  if (!c.healthy && c.last_log) a += `<details style="margin-top:6px"><summary>Senaste loggrad</summary><pre>${esc(c.last_log)}</pre></details>`;
+  if (c.image_mismatch) a += `<div class="errbox">The nodes run different image IDs. Ray requires identical builds.</div>`;
+  if (c.workers_down?.length) a += `<div class="warnbox">Worker without a running container: ${esc(c.workers_down.join(", "))}</div>`;
+  if (c.hung) a += `<div class="errbox">Startup has run longer than ${cfg.hang_timeout_min} min without responding, or shows errors.${cfg.auto_recover ? " Auto-recover is on." : ""}</div>`;
+  if (c.errors?.length) a += `<details style="margin-top:10px"><summary>${c.errors.length} error line(s) since start</summary><pre>${esc(c.errors.join("\n"))}</pre></details>`;
+  if (!c.healthy && c.last_log) a += `<details style="margin-top:6px"><summary>Last log line</summary><pre>${esc(c.last_log)}</pre></details>`;
   $("#alerts").innerHTML = a;
 
   const busy = S.action?.name;
   document.querySelectorAll("[data-a]").forEach(b => b.disabled = !!busy);
   $("#rebootBtn").disabled = busy || !cfg.allow_reboot;
-  $("#rebootBtn").title = cfg.allow_reboot ? "" : "ALLOW_REBOOT är av";
+  $("#rebootBtn").title = cfg.allow_reboot ? "" : "ALLOW_REBOOT is off";
   $("#applyBtn").hidden = cfg.mode !== "managed";
-  $("#actionInfo").textContent = busy ? `Pågår: ${busy} (sedan ${hhmm(new Date(S.action.started*1000))})` : "";
+  $("#actionInfo").textContent = busy ? `Running: ${busy} (since ${hhmm(new Date(S.action.started*1000))})` : "";
 
   $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
     const k = n.container, g = n.gpu || {}, m = n.mem || {};
     const used = m.total ? (m.total - m.available) : null;
-    const st = !n.reachable ? ["err", "nås inte"] : !k ? ["err", "ingen container"]
+    const st = !n.reachable ? ["err", "unreachable"] : !k ? ["err", "no container"]
       : k.running ? ["ok", k.state] : ["err", `${k.state} (exit ${k.exit_code})`];
     return `<div class="card node">
       <h3><span class="dot ${st[0]}"></span>${esc(n.role)} · ${esc(n.host)} <span class="muted">${esc(n.hostname || "")}</span></h3>
@@ -175,29 +175,29 @@ function render() {
         <div><b>Container</b><span>${esc(st[1])}</span></div>
         <div><b>GPU</b><span>${g.util ?? "–"} % · ${g.temp ?? "–"} °C · ${g.power ?? "–"} W</span>
           <div class="bar"><i style="width:${g.util||0}%"></i></div></div>
-        <div><b>Minne använt</b><span>${gib(used)} / ${gib(m.total)}</span>
+        <div><b>Memory used</b><span>${gib(used)} / ${gib(m.total)}</span>
           <div class="bar"><i style="width:${m.total ? 100*used/m.total : 0}%"></i></div></div>
-        <div><b>Uptime nod</b><span>${n.boot_time ? dur(Date.now()/1000 - n.boot_time) : "–"}</span></div>
+        <div><b>Node uptime</b><span>${n.boot_time ? dur(Date.now()/1000 - n.boot_time) : "–"}</span></div>
         <div><b>Image-ID</b><span><code>${esc((k?.image_id || "–").replace("sha256:","").slice(0,12))}</code></span></div>
       </div>
-      ${n.reachable && !n.can_reboot ? `<div class="muted" style="margin-top:8px">Ingen sudoers-regel för reboot på den här noden.</div>` : ""}
+      ${n.reachable && !n.can_reboot ? `<div class="muted" style="margin-top:8px">No sudoers rule for reboot on this node.</div>` : ""}
       ${n.error ? `<div class="errbox">${esc(n.error)}</div>` : ""}
-      <details style="margin-top:8px" data-logs="${i}"><summary>Loggar</summary><pre>Laddar…</pre></details>
+      <details style="margin-top:8px" data-logs="${i}"><summary>Logs</summary><pre>Loading…</pre></details>
     </div>`;
   }).join("");
   document.querySelectorAll("[data-logs]").forEach(d => d.addEventListener("toggle", async () => {
     if (!d.open) return;
     d.querySelector("pre").textContent = await (await fetch(`api/logs/${d.dataset.logs}?n=300`)).text();
   }));
-  // Behåll öppna logg-paneler mellan uppdateringar
+  // Keep open log panels open across refreshes
   openLogs.forEach(i => { const d = document.querySelector(`[data-logs="${i}"]`); if (d) d.open = true; });
 
   $("#events").innerHTML = (S.events || []).slice(0, 40).map(e =>
     `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
-    || `<span></span><span class="muted">Inga händelser än.</span>`;
-  $("#cfg").innerHTML = `Läge <b>${esc(cfg.mode)}</b> · klusterkatalog <code>${esc(cfg.cluster_dir)}</code> · SSH som <code>${esc(cfg.ssh_user)}</code><br>
-    Auto-recover <b>${cfg.auto_recover ? "på" : "av"}</b> (hängning efter ${cfg.hang_timeout_min} min, max ${cfg.max_auto_restarts} omstart(er)${cfg.allow_reboot && cfg.auto_reboot ? ", sedan reboot" : ""}) ·
-    reboot-knapp <b>${cfg.allow_reboot ? "på" : "av"}</b> · automatiska försök hittills: ${cfg.state.attempts}`;
+    || `<span></span><span class="muted">No events yet.</span>`;
+  $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
+    Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang after ${cfg.hang_timeout_min} min, max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
+    reboot button <b>${cfg.allow_reboot ? "on" : "off"}</b> · automatic attempts so far: ${cfg.state.attempts}`;
 }
 
 let openLogs = new Set();
@@ -207,10 +207,10 @@ document.addEventListener("toggle", e => {
 }, true);
 
 const CONFIRM = {
-  stop: "Stoppa klustret? API:et slutar svara.",
-  restart: "Starta om klustret? Uppstarten tar ca 20 minuter.",
-  reboot: "Boota om ALLA noder? Appen går också ner en stund om den kör på head.",
-  apply: "Skriva konfigurationen från env till alla noder? Gamla filer sparas som .bak.",
+  stop: "Stop the cluster? The API will stop responding.",
+  restart: "Restart the cluster? Startup takes about 20 minutes.",
+  reboot: "Reboot ALL nodes? The app also goes down for a while if it runs on the head.",
+  apply: "Write the config from env to all nodes? Old files are kept as .bak.",
 };
 document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", async () => {
   const a = b.dataset.a;
@@ -221,13 +221,13 @@ document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", a
 }));
 
 $("#testBtn").addEventListener("click", async () => {
-  const b = $("#testBtn"); b.disabled = true; $("#testOut").innerHTML = `<pre>Väntar på svar…</pre>`;
+  const b = $("#testBtn"); b.disabled = true; $("#testOut").innerHTML = `<pre>Waiting for response…</pre>`;
   try {
     const r = await (await fetch("api/test", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({prompt: $("#prompt").value})})).json();
     $("#testOut").innerHTML = r.ok
-      ? `<pre>${esc(r.answer)}</pre><div class="muted" style="margin-top:6px">${r.seconds} s · ${r.usage?.completion_tokens ?? "?"} tokens ut</div>
-         ${r.reasoning ? `<details><summary>Resonemang</summary><pre>${esc(r.reasoning)}</pre></details>` : ""}`
+      ? `<pre>${esc(r.answer)}</pre><div class="muted" style="margin-top:6px">${r.seconds} s · ${r.usage?.completion_tokens ?? "?"} tokens out</div>
+         ${r.reasoning ? `<details><summary>Reasoning</summary><pre>${esc(r.reasoning)}</pre></details>` : ""}`
       : `<div class="errbox">${esc(r.error)}</div>`;
   } finally { b.disabled = false; }
 });
@@ -235,9 +235,9 @@ $("#testBtn").addEventListener("click", async () => {
 document.querySelector("details:has(#preview)").addEventListener("toggle", async e => {
   if (!e.target.open) return;
   const p = await (await fetch("api/preview")).json();
-  $("#preview").innerHTML = (p.mode !== "managed" ? `<p>Läge <b>${esc(p.mode)}</b>: appen skriver inte till noderna. Diffen visar vad managed-läget skulle ändra.</p>` : "") +
+  $("#preview").innerHTML = (p.mode !== "managed" ? `<p>Mode <b>${esc(p.mode)}</b>: the app does not write to the nodes. The diff shows what managed mode would change.</p>` : "") +
     p.nodes.map(n => `<h3 style="font-size:14px;margin:12px 0 0">${esc(n.role)} · ${esc(n.host)}</h3>` +
-      n.files.map(f => `<div style="margin-top:6px"><code>${esc(f.name)}</code> ${f.diff ? "" : "<span class='muted'>– identisk</span>"}
+      n.files.map(f => `<div style="margin-top:6px"><code>${esc(f.name)}</code> ${f.diff ? "" : "<span class='muted'>– identical</span>"}
         ${f.diff ? `<pre>${esc(f.diff)}</pre>` : ""}</div>`).join("")).join("");
 });
 document.querySelector("details:has(#install)").addEventListener("toggle", async e => {

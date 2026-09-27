@@ -1,7 +1,7 @@
-"""vllmapp — status och styrning av ett vLLM/Ray-kluster på DGX Spark.
+"""vllmapp — status and control of a vLLM/Ray cluster on DGX Spark.
 
-Konfiguration kommer från miljön (Easypanels env-flik). Noderna nås över SSH
-med en egen nyckel som bara får köra vllmapp-agent (se agent/).
+Configuration comes from the environment (Easypanel's env tab). The nodes are reached
+over SSH with a dedicated key that may only run vllmapp-agent (see agent/).
 """
 import base64
 import difflib
@@ -29,7 +29,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-# ---------- konfiguration ----------
+# ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
 WORKER_HOSTS = [h.strip() for h in env("WORKER_HOSTS").split(",") if h.strip()]
 SSH_USER = env("SSH_USER", "root")
@@ -49,7 +49,7 @@ API_KEY = env("API_KEY")
 HF_TOKEN = env("HF_TOKEN")
 HF_CACHE_DIR = env("HF_CACHE_DIR", "${HOME}/.cache/huggingface")
 EXTRA_MOUNTS = [m.strip() for m in env("EXTRA_MOUNTS").split(",") if m.strip()]
-IF_NAMES = env("IF_NAMES")  # valfri override, ;-separerad i nodordning
+IF_NAMES = env("IF_NAMES")  # optional override, ;-separated in node order
 IB_HCAS = env("IB_HCAS")
 
 ADMIN_USER = env("ADMIN_USER", "admin")
@@ -103,7 +103,7 @@ def parse_ts(s):
         return None
 
 
-# ---------- händelselogg och tillstånd ----------
+# ---------- event log and state ----------
 _lock = threading.Lock()
 
 
@@ -143,7 +143,7 @@ def ensure_key():
     if not os.path.exists(KEY):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "vllmapp",
                         "-f", KEY], check=True)
-        event("skapade SSH-nyckel för vllmapp")
+        event("created SSH key for vllmapp")
 
 
 def pubkey():
@@ -151,7 +151,7 @@ def pubkey():
 
 
 def ssh(host, cmd, timeout=60, input=None):
-    """Kör ett agentkommando på noden. Returnerar (rc, parsed json | None, rå text)."""
+    """Run an agent command on the node. Returns (rc, parsed json | None, raw text)."""
     argv = ["ssh", "-i", KEY, "-p", SSH_PORT,
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
             "-o", "StrictHostKeyChecking=accept-new",
@@ -170,14 +170,14 @@ def ssh(host, cmd, timeout=60, input=None):
 
 
 # ---------- status ----------
-PHASES = [  # (mönster, fas) — sista träffen i loggen vinner
-    (re.compile(r"Väntar på \d+ noder|Waiting for"), "väntar på noder"),
-    (re.compile(r"Alla noder uppe"), "startar vLLM"),
-    (re.compile(r"Loading safetensors checkpoint shards:\s+(\d+)%"), "laddar vikter"),
-    (re.compile(r"Available KV cache memory"), "profilerar KV-cache"),
+PHASES = [  # (pattern, phase) — the last match in the log wins
+    (re.compile(r"Väntar på \d+ noder|Waiting for"), "waiting for nodes"),
+    (re.compile(r"Alla noder uppe|All nodes up"), "starting vLLM"),
+    (re.compile(r"Loading safetensors checkpoint shards:\s+(\d+)%"), "loading weights"),
+    (re.compile(r"Available KV cache memory"), "profiling KV cache"),
     (re.compile(r"Running FlashInfer autotune"), "autotune"),
-    (re.compile(r"Capturing CUDA graph"), "fångar CUDA-grafer"),
-    (re.compile(r"Application startup complete"), "klar"),
+    (re.compile(r"Capturing CUDA graph"), "capturing CUDA graphs"),
+    (re.compile(r"Application startup complete"), "ready"),
 ]
 ERRORS = re.compile(r"Traceback|RuntimeError|ValueError|Timed out|out of memory|No available memory"
                     r"|ActorDied|ActorHandleNotFound|RayWorkerError")
@@ -195,7 +195,7 @@ def http_get(url, headers=None, timeout=5):
             return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, ""
-    except Exception as e:  # noqa: BLE001 — nätverksfel är ett tillstånd, inte ett undantag
+    except Exception as e:  # noqa: BLE001 — a network error is a state, not an exception
         return 0, str(e)
 
 
@@ -258,16 +258,16 @@ def poll_once():
     uptime = now() - started if started else None
 
     if healthy:
-        state = "klar"
+        state = "ready"
     elif not head.get("reachable"):
-        state = "head nås inte"
+        state = "head unreachable"
     elif not hc:
-        state = "ingen container"
+        state = "no container"
     elif not hc.get("running"):
-        state = "stoppad"
+        state = "stopped"
     else:
-        state = "startar"
-    hung = (state == "startar" and uptime is not None and
+        state = "starting"
+    hung = (state == "starting" and uptime is not None and
             (uptime > HANG_TIMEOUT_MIN * 60 or (errs and uptime > 180)))
 
     STATUS.update({
@@ -275,7 +275,7 @@ def poll_once():
         "nodes": nodes,
         "cluster": {
             "state": state,
-            "phase": "klar" if healthy else phase,
+            "phase": "ready" if healthy else phase,
             "phase_pct": pct,
             "healthy": healthy,
             "models": models,
@@ -299,7 +299,7 @@ def auto_recover():
     s = load_state()
     if c.get("healthy"):
         if s["attempts"]:
-            event(f"klustret svarar igen efter {s['attempts']} automatisk(a) åtgärd(er)", "ok")
+            event(f"cluster responding again after {s['attempts']} automatic action(s)", "ok")
             s["attempts"] = 0
             save_state(s)
         return
@@ -308,14 +308,14 @@ def auto_recover():
     if now() - s["last_action"] < HANG_TIMEOUT_MIN * 60:
         return
     if s["attempts"] < MAX_AUTO_RESTARTS:
-        event(f"hängning upptäckt (fas: {c.get('phase')}, fel: {len(c.get('errors', []))}) "
-              "— startar om klustret automatiskt", "warn")
+        event(f"hang detected (phase: {c.get('phase')}, errors: {len(c.get('errors', []))}) "
+              "— restarting the cluster automatically", "warn")
         start_action("restart", auto=True)
     elif ALLOW_REBOOT and AUTO_REBOOT and now() - s["last_reboot"] > 6 * 3600:
-        event("omstart hjälpte inte — bootar om noderna automatiskt", "warn")
+        event("restart did not help — rebooting the nodes automatically", "warn")
         start_action("reboot", auto=True)
     elif s.get("gave_up", 0) < s["last_action"]:
-        event("klustret hänger och automatiken har gett upp — behöver en människa", "error")
+        event("cluster is hung and automation has given up — needs a human", "error")
         s["gave_up"] = now()
         save_state(s)
 
@@ -326,11 +326,11 @@ def poller():
             poll_once()
             auto_recover()
         except Exception as e:  # noqa: BLE001
-            event(f"pollningsfel: {e}", "error")
+            event(f"polling error: {e}", "error")
         time.sleep(POLL_SECONDS)
 
 
-# ---------- åtgärder ----------
+# ---------- actions ----------
 def on_nodes(nodes, cmd, timeout=600):
     ok = True
     for n in nodes:
@@ -338,7 +338,7 @@ def on_nodes(nodes, cmd, timeout=600):
         good = rc == 0 and res and res.get("rc", 0) == 0 and "error" not in res
         ok &= bool(good)
         detail = (res or {}).get("out") or (res or {}).get("error") or err
-        event(f"{n['role']} {n['host']}: {cmd} → {'ok' if good else 'FEL'}"
+        event(f"{n['role']} {n['host']}: {cmd} → {'ok' if good else 'FAILED'}"
               + ("" if good else f" ({redact(str(detail))[-300:]})"),
               "info" if good else "error")
     return ok
@@ -362,13 +362,13 @@ def do_restart():
 
 def do_reboot():
     if not ALLOW_REBOOT:
-        raise RuntimeError("ALLOW_REBOOT är av")
+        raise RuntimeError("ALLOW_REBOOT is off")
     s = load_state()
     s["last_reboot"] = now()
     save_state(s)
     on_nodes(NODES[1:], "reboot", timeout=30)
     time.sleep(5)
-    on_nodes(NODES[:1], "reboot", timeout=30)  # appen går ner med head om den kör där
+    on_nodes(NODES[:1], "reboot", timeout=30)  # the app goes down with the head if it runs there
 
 
 def do_pull():
@@ -378,14 +378,14 @@ def do_pull():
 
 def do_apply():
     if CONFIG_MODE != "managed":
-        raise RuntimeError("CONFIG_MODE är inte managed — konfigurationen på noderna ägs av någon annan")
+        raise RuntimeError("CONFIG_MODE is not managed — the config on the nodes is owned by someone else")
     for i, n in enumerate(NODES):
         for name, content in render(i, n).items():
             rc, res, err = ssh(n["host"], f"put {shlex.quote(name)}", input=content, timeout=30)
             good = rc == 0 and res and res.get("rc") == 0
-            event(f"{n['role']} {n['host']}: skrev {name}"
-                  + (" (oförändrad)" if good and not res.get("changed") else "")
-                  + ("" if good else f" — FEL {redact(str(res or err))[-200:]}"),
+            event(f"{n['role']} {n['host']}: wrote {name}"
+                  + (" (unchanged)" if good and not res.get("changed") else "")
+                  + ("" if good else f" — FAILED {redact(str(res or err))[-200:]}"),
                   "info" if good else "error")
 
 
@@ -395,7 +395,7 @@ ACTIONS = {"start": do_start, "stop": do_stop, "restart": do_restart,
 
 def start_action(name, auto=False):
     if not _action_lock.acquire(blocking=False):
-        raise HTTPException(409, f"{CURRENT_ACTION['name']} pågår redan")
+        raise HTTPException(409, f"{CURRENT_ACTION['name']} is already running")
     CURRENT_ACTION.update(name=name, started=now())
     s = load_state()
     s["last_action"] = now()
@@ -405,11 +405,11 @@ def start_action(name, auto=False):
 
     def run():
         try:
-            event(f"{'auto: ' if auto else ''}{name} startad")
+            event(f"{'auto: ' if auto else ''}{name} started")
             ACTIONS[name]()
-            event(f"{name} klar", "ok")
+            event(f"{name} done", "ok")
         except Exception as e:  # noqa: BLE001
-            event(f"{name} misslyckades: {e}", "error")
+            event(f"{name} failed: {e}", "error")
         finally:
             CURRENT_ACTION.update(name=None, started=0)
             _action_lock.release()
@@ -417,8 +417,8 @@ def start_action(name, auto=False):
     threading.Thread(target=run, daemon=True).start()
 
 
-# ---------- managed-läget: rendera konfig ----------
-COMPOSE = """# Genererad av vllmapp — ändra i Easypanels env, inte här
+# ---------- managed mode: render config ----------
+COMPOSE = """# Generated by vllmapp — change it in Easypanel's env, not here
 services:
   vllm:
     image: ${VLLM_IMAGE}
@@ -460,22 +460,22 @@ services:
 """
 
 ENTRYPOINT = r"""#!/bin/bash
-# Genererad av vllmapp. ROLE=head: Ray-head + vLLM (:8000). ROLE=worker: ansluter och blockerar.
+# Generated by vllmapp. ROLE=head: Ray head + vLLM (:8000). ROLE=worker: joins and blocks.
 set -euo pipefail
 
 if [ "$ROLE" = "worker" ]; then
   until ray start --block --address="${HEAD_IP}:6379" --node-ip-address="${HOST_IP}"; do
-    echo "Väntar på head ${HEAD_IP}..."; sleep 5
+    echo "Waiting for head ${HEAD_IP}..."; sleep 5
   done
   exit 0
 fi
 
 ray start --head --node-ip-address="${HOST_IP}" --port=6379 --dashboard-host=127.0.0.1
-echo "Väntar på ${NUM_NODES} noder i Ray-klustret..."
+echo "Waiting for ${NUM_NODES} nodes in the Ray cluster..."
 until [ "$(python3 -c 'import ray; ray.init(address="auto", logging_level="ERROR"); print(sum(n["Alive"] for n in ray.nodes()))' 2>/dev/null)" -ge "${NUM_NODES}" ]; do
   sleep 5
 done
-echo "Alla noder uppe – startar vLLM med ${MODEL}"
+echo "All nodes up – starting vLLM with ${MODEL}"
 
 exec vllm serve "${MODEL}" \
   --tensor-parallel-size "${TP_SIZE:-$NUM_NODES}" \
@@ -512,7 +512,7 @@ def vllm_args():
 def render(i, n):
     iface, hca = net_for(i, n)
     envfile = "\n".join([
-        "# Genererad av vllmapp — ändra i Easypanels env, inte här",
+        "# Generated by vllmapp — change it in Easypanel's env, not here",
         f"ROLE={n['role']}",
         f"VLLM_IMAGE={VLLM_IMAGE}",
         f"HOST_IP={n['host']}",
@@ -540,19 +540,19 @@ def preview():
             cur = (res or {}).get("content", "")
             diff = "".join(difflib.unified_diff(
                 redact(cur).splitlines(True), redact(new).splitlines(True),
-                f"{n['host']}:{name} (nu)", f"{n['host']}:{name} (från env)"))
+                f"{n['host']}:{name} (current)", f"{n['host']}:{name} (from env)"))
             files.append({"name": name, "exists": (res or {}).get("exists", False),
                           "diff": diff, "rendered": redact(new)})
         out.append({**n, "files": files})
     return out
 
 
-# ---------- webb ----------
+# ---------- web ----------
 app = FastAPI(title="vllmapp")
 def auth(request: Request):
-    """Basic-auth med UTF-8 (FastAPIs HTTPBasic avkodar ASCII, så å/ä/ö i lösenordet gav alltid 401)."""
+    """Basic auth with UTF-8 (FastAPI's HTTPBasic decodes ASCII, so non-ASCII passwords always got 401)."""
     if not ADMIN_PASSWORD:
-        raise HTTPException(503, "ADMIN_PASSWORD är inte satt — sätt den i Easypanels env")
+        raise HTTPException(503, "ADMIN_PASSWORD is not set — set it in Easypanel's env")
     user = password = None
     scheme, _, param = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() == "basic":
@@ -567,7 +567,7 @@ def auth(request: Request):
         secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and \
         secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
     if not ok:
-        raise HTTPException(401, "fel inloggning", headers={"WWW-Authenticate": 'Basic realm="vllmapp", charset="UTF-8"'})
+        raise HTTPException(401, "invalid credentials", headers={"WWW-Authenticate": 'Basic realm="vllmapp", charset="UTF-8"'})
     return user
 
 
@@ -597,11 +597,11 @@ def api_status():
 @app.post("/api/action/{name}", dependencies=[Depends(auth)])
 def api_action(name: str):
     if name not in ACTIONS:
-        raise HTTPException(404, "okänd åtgärd")
+        raise HTTPException(404, "unknown action")
     if name == "reboot" and not ALLOW_REBOOT:
-        raise HTTPException(403, "ALLOW_REBOOT är av")
+        raise HTTPException(403, "ALLOW_REBOOT is off")
     if name == "apply" and CONFIG_MODE != "managed":
-        raise HTTPException(403, "CONFIG_MODE är inte managed")
+        raise HTTPException(403, "CONFIG_MODE is not managed")
     start_action(name)
     return {"started": name}
 
@@ -609,7 +609,7 @@ def api_action(name: str):
 @app.post("/api/test", dependencies=[Depends(auth)])
 async def api_test(request: Request):
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-    prompt = (body.get("prompt") or "Vad är 17*23? Svara bara med talet.")[:2000]
+    prompt = (body.get("prompt") or "What is 17*23? Answer with the number only.")[:2000]
     model = SERVED_MODEL_NAME or (STATUS["cluster"].get("models") or [""])[0]
     req = urllib.request.Request(
         f"http://{HEAD_HOST}:{VLLM_PORT}/v1/chat/completions",
@@ -643,10 +643,10 @@ def api_preview():
 
 @app.get("/api/install", dependencies=[Depends(auth)])
 def api_install():
-    """Kommandon att klistra in på varje nod (installerar agent + nyckel)."""
+    """Commands to paste on each node (installs agent + key)."""
     agent = open(os.path.join(os.path.dirname(__file__), "vllmapp-agent")).read()
     b64 = base64.b64encode(agent.encode()).decode()
-    script = f"""# Kör som {SSH_USER} på varje nod ({', '.join(n['host'] for n in NODES)})
+    script = f"""# Run as {SSH_USER} on each node ({', '.join(n['host'] for n in NODES)})
 mkdir -p ~/.local/bin ~/.config/vllmapp ~/.ssh && chmod 700 ~/.ssh
 echo '{b64}' | base64 -d > ~/.local/bin/vllmapp-agent && chmod 755 ~/.local/bin/vllmapp-agent
 [ -f ~/.config/vllmapp/agent.env ] || echo 'CLUSTER_DIR={CLUSTER_DIR}' > ~/.config/vllmapp/agent.env
@@ -654,7 +654,7 @@ touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 sed -i '/ vllmapp$/d' ~/.ssh/authorized_keys
 printf 'command="%s/.local/bin/vllmapp-agent",restrict %s\\n' "$HOME" '{pubkey()}' >> ~/.ssh/authorized_keys
 
-# Valfritt, för reboot-knappen (lösenordsfri reboot, inget annat):
+# Optional, for the reboot button (passwordless reboot, nothing else):
 echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" | sudo tee /etc/sudoers.d/vllmapp-reboot >/dev/null && sudo chmod 440 /etc/sudoers.d/vllmapp-reboot
 """
     return PlainTextResponse(script)
@@ -664,8 +664,8 @@ echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" | sudo tee /etc/sudo
 def startup():
     ensure_key()
     if not NODES:
-        event("HEAD_HOST är inte satt — inget att övervaka", "error")
+        event("HEAD_HOST is not set — nothing to monitor", "error")
         return
-    event(f"vllmapp startad: head {HEAD_HOST}, workers {WORKER_HOSTS or '–'}, "
-          f"läge {CONFIG_MODE}, auto-recover {'på' if AUTO_RECOVER else 'av'}")
+    event(f"vllmapp started: head {HEAD_HOST}, workers {WORKER_HOSTS or '–'}, "
+          f"mode {CONFIG_MODE}, auto-recover {'on' if AUTO_RECOVER else 'off'}")
     threading.Thread(target=poller, daemon=True).start()

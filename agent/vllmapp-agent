@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""vllmapp-agent — körs på varje nod som SSH forced command.
+"""vllmapp-agent — runs on each node as an SSH forced command.
 
-Appen i Easypanel når noden med en nyckel som bara får köra det här
-skriptet (authorized_keys: command="~/.local/bin/vllmapp-agent",restrict).
-Kommandot kommer i SSH_ORIGINAL_COMMAND och vitlistas här.
+The app in Easypanel reaches the node with a key that may only run this
+script (authorized_keys: command="~/.local/bin/vllmapp-agent",restrict).
+The command arrives in SSH_ORIGINAL_COMMAND and is allowlisted here.
 
-Konfig: ~/.config/vllmapp/agent.env (CLUSTER_DIR=...).
+Config: ~/.config/vllmapp/agent.env (CLUSTER_DIR=...).
 """
 import json
 import os
@@ -19,15 +19,15 @@ VERSION = "1"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
-# Filer appen får läsa/skriva i klusterkatalogen (managed-läget)
+# Files the app may read/write in the cluster dir (managed mode)
 WRITABLE = re.compile(r"^(compose\.yaml|entrypoint\.sh|\.env|patches/[A-Za-z0-9_.-]+)$")
 
-# Loggrader som säger något om uppstartsfas eller fel
+# Log lines that say something about startup phase or errors
 SCAN = re.compile(
     r"Loading safetensors checkpoint shards|Available KV cache memory|GPU KV cache size"
     r"|Maximum concurrency|Running FlashInfer autotune"
     r"|Capturing CUDA graph|Graph capturing finished|Application startup complete"
-    r"|Starting vLLM API server|Väntar på|Alla noder uppe"
+    r"|Starting vLLM API server|Väntar på|Alla noder uppe|All nodes up"
     r"|Traceback|RuntimeError|ValueError|Timed out|out of memory|No available memory"
     r"|ActorDied|ActorHandleNotFound|RayWorkerError|Killed"
 )
@@ -58,7 +58,7 @@ def out(obj):
 
 
 def container(c):
-    """Första containern i compose-projektet i CLUSTER_DIR."""
+    """First container in the compose project in CLUSTER_DIR."""
     if not os.path.isdir(c["CLUSTER_DIR"]):
         return None
     rc, so, _ = run(["docker", "compose", "ps", "-a", "-q"], cwd=c["CLUSTER_DIR"])
@@ -161,7 +161,7 @@ def compose(c, *args, timeout=600):
 
 def reboot():
     if not can_reboot():
-        return out({"rc": 1, "out": "saknar sudoers-regel för /usr/bin/systemctl reboot"})
+        return out({"rc": 1, "out": "missing sudoers rule for /usr/bin/systemctl reboot"})
     subprocess.Popen(["sh", "-c", "sleep 2; sudo -n /usr/bin/systemctl reboot"],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
@@ -169,7 +169,7 @@ def reboot():
 
 
 def netdetect(ip):
-    """Gränssnittet som har ip, och RoCE-HCA:erna på samma fysiska port."""
+    """The interface that has ip, and the RoCE HCAs on the same physical port."""
     rc, so, _ = run(["ip", "-o", "-4", "addr"])
     iface = None
     for line in so.splitlines():
@@ -192,7 +192,7 @@ def netdetect(ip):
 
 def readfile(c, rel):
     if not WRITABLE.match(rel):
-        return out({"error": "otillåten fil"})
+        return out({"error": "file not allowed"})
     p = os.path.join(c["CLUSTER_DIR"], rel)
     ok = os.path.exists(p)
     out({"exists": ok, "content": open(p).read() if ok else ""})
@@ -200,7 +200,7 @@ def readfile(c, rel):
 
 def putfile(c, rel):
     if not WRITABLE.match(rel):
-        return out({"error": "otillåten fil"})
+        return out({"error": "file not allowed"})
     p = os.path.join(c["CLUSTER_DIR"], rel)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     data = sys.stdin.read()
@@ -243,7 +243,7 @@ def main():
     elif cmd == "version":
         out({"agent": VERSION})
     else:
-        out({"error": f"okänt kommando: {cmd}"})
+        out({"error": f"unknown command: {cmd}"})
         sys.exit(2)
 
 
