@@ -410,6 +410,7 @@ def preflight():
 
 def do_start():
     preflight()
+    write_config()
     on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
@@ -421,8 +422,11 @@ def do_stop():
 
 def do_restart():
     preflight()
+    write_config()
+    # stop + up rather than compose restart, which would keep the old .env and compose.yaml
     on_nodes(NODES[:1], "stop")
-    on_nodes(NODES[1:], "restart")
+    on_nodes(NODES[1:], "stop")
+    on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
 
@@ -442,9 +446,12 @@ def do_pull():
         list(ex.map(lambda n: on_nodes([n], "pull", timeout=3600), NODES))
 
 
-def do_apply():
+def write_config():
+    """Managed mode: write the config from env to every node before the cluster starts.
+    An app deploy never gets here, so new env only takes effect on Start/Restart."""
     if CONFIG_MODE != "managed":
-        raise RuntimeError("CONFIG_MODE is not managed — the config on the nodes is owned by someone else")
+        return
+    failed = False
     for i, n in enumerate(NODES):
         for name, content in render(i, n).items():
             rc, res, err = ssh(n["host"], f"put {shlex.quote(name)}", input=content, timeout=30)
@@ -453,10 +460,13 @@ def do_apply():
                   + (" (unchanged)" if good and not res.get("changed") else "")
                   + ("" if good else f" — FAILED {redact(str(res or err))[-200:]}"),
                   "info" if good else "error")
+            failed |= not good
+    if failed:
+        raise RuntimeError("could not write the config to every node — cluster not started")
 
 
 ACTIONS = {"start": do_start, "stop": do_stop, "restart": do_restart,
-           "reboot": do_reboot, "pull": do_pull, "apply": do_apply}
+           "reboot": do_reboot, "pull": do_pull}
 
 
 def start_action(name, auto=False):
@@ -673,8 +683,6 @@ def api_action(name: str):
         raise HTTPException(404, "unknown action")
     if name == "reboot" and not ALLOW_REBOOT:
         raise HTTPException(403, "ALLOW_REBOOT is off")
-    if name == "apply" and CONFIG_MODE != "managed":
-        raise HTTPException(403, "CONFIG_MODE is not managed")
     start_action(name)
     return {"started": name}
 

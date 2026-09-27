@@ -15,8 +15,9 @@ the nvidia runtime and the app's public SSH key.
   `UNHEALTHY_GRACE_MIN`, the app restarts the cluster (at most `MAX_AUTO_RESTARTS` times), and then reboots
   if `ALLOW_REBOOT` and `AUTO_REBOOT` are on (at most once per 6 h)
 - **Managed mode:** the app generates `.env`, `compose.yaml` and `entrypoint.sh` for each node
-  from its env and writes them over SSH. Network interface and RoCE HCAs are detected per node.
-  `existing` mode (the default) never touches the files, but the preview shows the diff.
+  from its env and writes them over SSH on every Start and Restart, including auto-recover.
+  Deploying the app never touches the cluster, so a changed env takes effect on the next
+  restart. Network interface and RoCE HCAs are detected per node. `existing` mode (the default) never touches the files, but the preview shows the diff.
 
 ## How the app reaches the nodes
 

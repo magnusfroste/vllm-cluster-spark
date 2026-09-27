@@ -91,7 +91,6 @@ details summary { cursor: pointer; color: var(--accent); }
       <button data-a="stop">Stop</button>
       <button data-a="pull">Pull image</button>
       <button class="danger" data-a="reboot" id="rebootBtn">Reboot nodes</button>
-      <button data-a="apply" id="applyBtn">Write config to nodes</button>
     </div>
     <div class="muted" id="actionInfo" style="margin-top:8px"></div>
   </section>
@@ -174,7 +173,6 @@ function render() {
   document.querySelectorAll("[data-a]").forEach(b => b.disabled = !!busy);
   $("#rebootBtn").disabled = busy || !cfg.allow_reboot;
   $("#rebootBtn").title = cfg.allow_reboot ? "" : "ALLOW_REBOOT is off";
-  $("#applyBtn").hidden = cfg.mode !== "managed";
   $("#actionInfo").textContent = busy ? `Running: ${busy} (since ${hhmm(new Date(S.action.started*1000))})` : "";
 
   $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
@@ -216,7 +214,6 @@ const CONFIRM = {
   stop: "Stop the cluster? The API will stop responding.",
   restart: "Restart the cluster? Startup takes about 20 minutes.",
   reboot: "Reboot ALL nodes? The app also goes down for a while if it runs on the head.",
-  apply: "Write the config from env to all nodes? Old files are kept as .bak.",
 };
 document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", async () => {
   const a = b.dataset.a;
