@@ -1,0 +1,5 @@
+# Hemligheter – aldrig i git
+.env
+env.head
+env.worker
+.env.bak*

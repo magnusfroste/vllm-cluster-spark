@@ -1,0 +1,47 @@
+# Samma fil på båda noderna – rollen styrs av .env
+services:
+  vllm:
+    image: ${VLLM_IMAGE}
+    container_name: vllm-${ROLE}
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/opt/entrypoint.sh"]
+    network_mode: host
+    ipc: host
+    shm_size: 16gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    devices:
+      - /dev/infiniband:/dev/infiniband
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./entrypoint.sh:/opt/entrypoint.sh:ro
+      # Patch: låt ModelOpt hitta MXFP8-schemat för GLM5-next fusade KDA-projektion
+      - ./patches/modelopt.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/modelopt.py:ro
+      - ./patches/kda.py:/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/kda.py:ro
+      - ./patches/model.py:/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/model.py:ro
+      - ./patches/workspace.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/workspace.py:ro
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # Dense-läge: sparse-indexern av, så TRITON_MLA kan användas i stället
+      # för FLASHINFER_MLA_SPARSE_SM120 (som kräver fp8_ds_mla + pe_dim 64).
+      - ./patches/config.json:/root/.cache/huggingface/hub/models--local-inference-lab--GLM-5.3-Flash-NVFP4-Spark/snapshots/a608241037e4c2565356bff7ca293f2133888f88/config.json:ro
+    env_file: .env
+    environment:
+      VLLM_HOST_IP: ${HOST_IP}
+      NCCL_SOCKET_IFNAME: ${IF_NAME}
+      GLOO_SOCKET_IFNAME: ${IF_NAME}
+      TP_SOCKET_IFNAME: ${IF_NAME}
+      UCX_NET_DEVICES: ${IF_NAME}
+      OMPI_MCA_btl_tcp_if_include: ${IF_NAME}
+      NCCL_IB_HCA: ${IB_HCA}
+      NCCL_IB_GID_INDEX: "3"
+      RAY_memory_monitor_refresh_ms: "0"
+      MASTER_ADDR: ${HEAD_IP}
+      VLLM_USE_V2_MODEL_RUNNER: "0"
+      CUTE_DSL_ARCH: sm_121a
