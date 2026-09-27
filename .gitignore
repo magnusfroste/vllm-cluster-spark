@@ -2,3 +2,4 @@
 .env
 env.head
 env.worker
+.env.bak*
