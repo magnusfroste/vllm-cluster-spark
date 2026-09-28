@@ -1,0 +1,13 @@
+{
+  "description": "MXFP8 in linear attention (KDA) and dense MLA for GLM-5.3-Flash NVFP4 on the eugr nightly image. See README.md in this folder.",
+  "models": ["local-inference-lab/GLM-5.3-Flash-NVFP4-Spark"],
+  "image_digest": "sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563",
+  "revision": "a608241037e4c2565356bff7ca293f2133888f88",
+  "mounts": {
+    "modelopt.py": "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/modelopt.py",
+    "kda.py": "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/kda.py",
+    "model.py": "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/common/model.py",
+    "workspace.py": "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/workspace.py",
+    "config.json": "/root/.cache/huggingface/hub/models--local-inference-lab--GLM-5.3-Flash-NVFP4-Spark/snapshots/{revision}/config.json"
+  }
+}

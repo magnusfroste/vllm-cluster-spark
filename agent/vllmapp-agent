@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2"
+VERSION = "3"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -92,7 +92,7 @@ def can_reboot():
     return rc == 0
 
 
-def status(c):
+def status(c, args=()):
     cid = container(c)
     info = None
     if cid:
@@ -122,6 +122,7 @@ def status(c):
         "mem": meminfo(),
         "gpu": gpu(),
         "container": info,
+        **(setup(c, *args) if len(args) >= 4 else {}),
     })
 
 
@@ -257,12 +258,119 @@ def putfile(c, rel):
     out({"rc": 0, "changed": True})
 
 
+# ---------- setup checks and model download ----------
+SAFE_PATH = re.compile(r"^[A-Za-z0-9_./${}~-]+$")
+SAFE_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SAFE_REV = re.compile(r"^[A-Za-z0-9_.-]+$")
+SAFE_IMAGE = re.compile(r"^[A-Za-z0-9_./:@-]+$")
+DL_NAME = "vllm-download"
+
+
+def hf_cache(path):
+    return os.path.expanduser(path.replace("${HOME}", HOME).replace("$HOME", HOME))
+
+
+def repo_dir(cache, repo):
+    return os.path.join(cache, "hub", "models--" + repo.replace("/", "--"))
+
+
+def dl_container():
+    """State of the download container: None, or running/exit code and the last log line."""
+    rc, so, _ = run(["docker", "inspect", DL_NAME])
+    if rc != 0:
+        return None
+    d = json.loads(so)[0]["State"]
+    _, lo, le = run(["docker", "logs", "--tail", "3", DL_NAME])
+    last = [l for l in (lo + le).replace("\r", "\n").splitlines() if l.strip()]
+    return {"running": d["Running"], "exit_code": d["ExitCode"],
+            "started_at": d["StartedAt"], "finished_at": d["FinishedAt"],
+            "last": last[-1][:300] if last else ""}
+
+
+def model_state(cache, repo, rev):
+    d = repo_dir(cache, repo)
+    blobs = os.path.join(d, "blobs")
+    size, partial = 0, 0
+    try:
+        for e in os.scandir(blobs):
+            size += e.stat().st_size
+            partial += e.name.endswith(".incomplete")
+    except OSError:
+        pass
+    snap = rev or read(os.path.join(d, "refs", "main"))
+    snapdir = os.path.join(d, "snapshots", snap) if snap else None
+    files = os.listdir(snapdir) if snapdir and os.path.isdir(snapdir) else []
+    dl = dl_container()
+    return {"bytes": size, "partial": partial, "snapshot": snap if files else None,
+            "files": len(files), "download": dl,
+            "present": bool(files) and not partial and not (dl and dl["running"])}
+
+
+def setup(c, host_ip, head_ip, cache, repo, rev=""):
+    """Checks that need root to fix, plus the model's state in the HF cache."""
+    if not (re.match(r"^[\d.]+$", host_ip) and re.match(r"^[\d.]+$", head_ip)
+            and SAFE_PATH.match(cache) and (repo == "-" or SAFE_REPO.match(repo))
+            and (not rev or SAFE_REV.match(rev))):
+        return {"setup_error": "invalid arguments"}
+    cache = hf_cache(cache)
+    checks = {}
+    rc, _, se = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=20)
+    checks["docker"] = {"ok": rc == 0, "detail": se.strip()[-200:]}
+    checks["nvidia_toolkit"] = {"ok": any(os.path.exists(p) for p in
+                                          ("/usr/bin/nvidia-container-cli", "/usr/bin/nvidia-ctk"))}
+    rc, so, _ = run(["ip", "-o", "-4", "addr"])
+    iface = next((l.split()[1] for l in so.splitlines()
+                  if len(l.split()) > 3 and l.split()[3].split("/")[0] == host_ip), None)
+    checks["link_ip"] = {"ok": bool(iface), "detail": iface or f"{host_ip} is not on any interface"}
+    if host_ip != head_ip:
+        rc, _, _ = run(["ping", "-c", "1", "-W", "2", head_ip], timeout=10)
+        checks["head_reachable"] = {"ok": rc == 0}
+    p = cache
+    while not os.path.exists(p) and p != "/":
+        p = os.path.dirname(p)
+    st = os.statvfs(p)
+    checks["disk_free"] = {"ok": True, "bytes": st.f_bavail * st.f_frsize}
+    checks["reboot_sudo"] = {"ok": can_reboot(), "optional": True}
+    return {"checks": checks,
+            "model": model_state(cache, repo, rev) if repo != "-" else None}
+
+
+def download(image, repo, cache, rev=""):
+    """Start `hf download` in a detached container, with the HF token from stdin.
+    xet and hf_transfer are off: both have hung on large downloads on DGX Spark."""
+    if not (SAFE_IMAGE.match(image) and SAFE_REPO.match(repo) and SAFE_PATH.match(cache)
+            and (not rev or SAFE_REV.match(rev))):
+        return out({"rc": 1, "out": "invalid arguments"})
+    dl = dl_container()
+    if dl and dl["running"]:
+        return out({"rc": 0, "out": "download already running"})
+    if dl:
+        run(["docker", "rm", "-f", DL_NAME])
+    cache = hf_cache(cache)
+    os.makedirs(cache, exist_ok=True)
+    env = dict(os.environ, HF_TOKEN=sys.stdin.read().strip())
+    cmd = ["docker", "run", "-d", "--name", DL_NAME, "--network", "host",
+           "-v", f"{cache}:/root/.cache/huggingface",
+           "-e", "HF_TOKEN", "-e", "HF_HUB_ENABLE_HF_TRANSFER=0", "-e", "HF_HUB_DISABLE_XET=1",
+           "-e", "HF_HUB_DOWNLOAD_TIMEOUT=30",
+           "--entrypoint", "hf", image, "download", repo, "--max-workers", "8"]
+    if rev:
+        cmd += ["--revision", rev]
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env=env)
+    out({"rc": p.returncode, "out": (p.stdout + p.stderr)[-2000:]})
+
+
+def download_stop():
+    rc, so, se = run(["docker", "stop", DL_NAME], timeout=60)
+    out({"rc": rc, "out": (so + se)[-500:]})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
     cmd, args = (argv[0], argv[1:]) if argv else ("status", [])
     if cmd == "status":
-        status(c)
+        status(c, args)
     elif cmd == "scan":
         since = args[0] if args else None
         if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
@@ -287,6 +395,10 @@ def main():
         readfile(c, args[0])
     elif cmd == "put" and args:
         putfile(c, args[0])
+    elif cmd == "download" and len(args) >= 3:
+        download(*args[:4])
+    elif cmd == "download-stop":
+        download_stop()
     elif cmd == "version":
         out({"agent": VERSION})
     else:

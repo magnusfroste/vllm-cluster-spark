@@ -35,7 +35,7 @@ WORKER_HOSTS = [h.strip() for h in env("WORKER_HOSTS").split(",") if h.strip()]
 SSH_USER = env("SSH_USER", "root")
 SSH_PORT = env("SSH_PORT", "22")
 CLUSTER_DIR = env("CLUSTER_DIR", "~/vllm-cluster")
-CONFIG_MODE = env("CONFIG_MODE", "existing")  # existing | managed
+CONFIG_MODE = env("CONFIG_MODE", "managed")  # managed | existing
 VLLM_PORT = env("VLLM_PORT", "8000")
 
 VLLM_IMAGE = env("VLLM_IMAGE")
@@ -51,6 +51,9 @@ HF_CACHE_DIR = env("HF_CACHE_DIR", "${HOME}/.cache/huggingface")
 EXTRA_MOUNTS = [m.strip() for m in env("EXTRA_MOUNTS").split(",") if m.strip()]
 IF_NAMES = env("IF_NAMES")  # optional override, ;-separated in node order
 IB_HCAS = env("IB_HCAS")
+PATCHES = env("PATCHES", "auto")  # auto (by MODEL) | none | name of a folder in patchsets/
+MODEL_REVISION = env("MODEL_REVISION")
+HF_OFFLINE = envbool("HF_OFFLINE", True)  # vLLM never downloads; the app's download does
 
 ADMIN_USER = env("ADMIN_USER", "admin")
 ADMIN_PASSWORD = env("ADMIN_PASSWORD")
@@ -72,6 +75,24 @@ EVENTS_FILE = os.path.join(DATA, "events.log")
 
 NODES = ([{"role": "head", "host": HEAD_HOST}] if HEAD_HOST else []) + \
         [{"role": "worker", "host": h} for h in WORKER_HOSTS]
+
+PATCHSET_DIR = os.path.join(os.path.dirname(__file__), "patchsets")
+
+
+def load_patchsets():
+    sets = {}
+    for name in sorted(os.listdir(PATCHSET_DIR)) if os.path.isdir(PATCHSET_DIR) else []:
+        try:
+            sets[name] = json.load(open(os.path.join(PATCHSET_DIR, name, "set.json")))
+        except (OSError, ValueError):
+            pass
+    return sets
+
+
+PATCHSETS = load_patchsets()
+PATCHSET = (next((n for n, ps in PATCHSETS.items() if MODEL in ps.get("models", [])), None)
+            if PATCHES == "auto" else None if PATCHES in ("", "none") else PATCHES)
+REVISION = MODEL_REVISION or (PATCHSETS.get(PATCHSET) or {}).get("revision", "")
 
 SECRETS = [s for s in (API_KEY, HF_TOKEN, ADMIN_PASSWORD) if len(s) >= 6]
 
@@ -211,7 +232,8 @@ def http_get(url, headers=None, timeout=5):
 
 def node_status(n):
     t0 = now()
-    rc, st, err = ssh(n["host"], "status", timeout=30)
+    args = f" {n['host']} {HEAD_HOST} {shlex.quote(HF_CACHE_DIR)} {MODEL or '-'} {REVISION}"
+    rc, st, err = ssh(n["host"], "status" + args.rstrip(), timeout=30)
     res = {**n, "reachable": st is not None and "error" not in (st or {}),
            "latency_ms": int((now() - t0) * 1000), "error": None if st else redact(err)[-300:]}
     if st:
@@ -321,9 +343,61 @@ def poll_once():
             "workers_down": [n["host"] for n in nodes[1:]
                              if not (n.get("container") or {}).get("running")],
         },
+        "setup": setup_summary(nodes),
         "action": dict(CURRENT_ACTION),
     })
     return STATUS
+
+
+_model_size = {}
+
+
+def model_size():
+    """Total size of the model repo from the HF API (cached), for download progress and disk check."""
+    if not MODEL:
+        return None
+    size, checked = _model_size.get("v"), _model_size.get("ts", 0)
+    if size is None and now() - checked > 600:  # a failed lookup is retried every 10 min
+        _model_size["ts"] = now()
+        hdr = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+        code, body = http_get(f"https://huggingface.co/api/models/{MODEL}/revision/"
+                              f"{REVISION or 'main'}?blobs=true", hdr, timeout=15)
+        try:
+            if code == 200:
+                size = _model_size["v"] = sum(f.get("size") or 0 for f in json.loads(body)["siblings"])
+        except (ValueError, KeyError):
+            pass
+    return size
+
+
+AGENT_VERSION = re.search(r'^VERSION = "(\d+)"', open(os.path.join(os.path.dirname(__file__),
+                          "vllmapp-agent")).read(), re.M).group(1)
+
+
+def setup_summary(nodes):
+    """What still needs doing before the cluster can start: root fixes per node, env, model."""
+    size = model_size()
+    missing = [k for k, v in (("HEAD_HOST", HEAD_HOST), ("API_KEY", API_KEY),
+                              ("MODEL", MODEL), ("VLLM_IMAGE", VLLM_IMAGE))
+               if not v and (CONFIG_MODE == "managed" or k in ("HEAD_HOST", "API_KEY"))]
+    per = []
+    for n in nodes:
+        m = n.get("model") or {}
+        dl = m.get("download") or {}
+        checks = dict(n.get("checks") or {})
+        if "disk_free" in checks and size and not m.get("present"):
+            need = size - m.get("bytes", 0)
+            checks["disk_free"] = {**checks["disk_free"], "ok": checks["disk_free"]["bytes"] > need * 1.05,
+                                   "need": need}
+        per.append({"role": n["role"], "host": n["host"], "reachable": n.get("reachable"),
+                    "agent": n.get("agent"), "agent_old": n.get("reachable") and n.get("agent") != AGENT_VERSION,
+                    "checks": checks, "model": m or None,
+                    "downloading": bool(dl.get("running")),
+                    "download_failed": bool(dl) and not dl.get("running") and dl.get("exit_code") != 0})
+    return {"missing_env": missing, "model": MODEL, "revision": REVISION, "size": size,
+            "patchset": PATCHSET, "patchset_missing": bool(PATCHSET) and PATCHSET not in PATCHSETS,
+            "agent_version": AGENT_VERSION, "nodes": per,
+            "model_ready": bool(MODEL) and all((p["model"] or {}).get("present") for p in per)}
 
 
 def auto_recover():
@@ -408,7 +482,18 @@ def preflight():
     event("preflight: RoCE GID 3 present on all nodes", "ok")
 
 
+def model_check():
+    """Managed mode: the model must be downloaded on every node (vLLM runs offline)."""
+    if CONFIG_MODE != "managed" or not MODEL:
+        return
+    s = STATUS.get("setup") or {}
+    bad = [p["host"] for p in s.get("nodes", []) if p.get("model") and not p["model"].get("present")]
+    if bad:
+        raise RuntimeError(f"{MODEL} is not fully downloaded on {', '.join(bad)} — use Download model first")
+
+
 def do_start():
+    model_check()
     preflight()
     write_config()
     on_nodes(NODES[1:], "up")
@@ -421,6 +506,7 @@ def do_stop():
 
 
 def do_restart():
+    model_check()
     preflight()
     write_config()
     # stop + up rather than compose restart, which would keep the old .env and compose.yaml
@@ -465,8 +551,30 @@ def write_config():
         raise RuntimeError("could not write the config to every node — cluster not started")
 
 
+def do_download():
+    if not (MODEL and VLLM_IMAGE):
+        raise RuntimeError("MODEL and VLLM_IMAGE must be set")
+    cmd = f"download {shlex.quote(VLLM_IMAGE)} {MODEL} {shlex.quote(HF_CACHE_DIR)} {REVISION}".rstrip()
+
+    def one(n):
+        rc, res, err = ssh(n["host"], cmd, timeout=3600, input=HF_TOKEN)
+        good = rc == 0 and res and res.get("rc") == 0
+        event(f"{n['role']} {n['host']}: download "
+              + ("started" if good else f"FAILED ({redact(str((res or {}).get('out') or err))[-300:]})"),
+              "info" if good else "error")
+        return good
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        if not all(ex.map(one, NODES)):
+            raise RuntimeError("the download did not start on every node")
+
+
+def do_download_stop():
+    on_nodes(NODES, "download-stop", timeout=90)
+
+
 ACTIONS = {"start": do_start, "stop": do_stop, "restart": do_restart,
-           "reboot": do_reboot, "pull": do_pull}
+           "reboot": do_reboot, "pull": do_pull,
+           "download": do_download, "download-stop": do_download_stop}
 
 
 def start_action(name, auto=False):
@@ -533,6 +641,7 @@ services:
       MASTER_ADDR: ${HEAD_IP}
       VLLM_USE_V2_MODEL_RUNNER: "0"
       CUTE_DSL_ARCH: sm_121a
+      HF_HUB_OFFLINE: "{offline}"
 """
 
 ENTRYPOINT = r"""#!/bin/bash
@@ -587,6 +696,8 @@ def vllm_args():
         a += ["--max-model-len", MAX_MODEL_LEN]
     if GPU_MEM_UTIL:
         a += ["--gpu-memory-utilization", GPU_MEM_UTIL]
+    if REVISION and "--revision" not in VLLM_EXTRA_ARGS:
+        a += ["--revision", REVISION]
     return " ".join(a + shlex.split(VLLM_EXTRA_ARGS))
 
 
@@ -607,9 +718,17 @@ def render(i, n):
         f"VLLM_API_KEY={API_KEY}",
         f"HF_TOKEN={HF_TOKEN}",
     ]) + "\n"
-    mounts = "".join(f"      - {m if m.count(':') >= 2 else m + ':ro'}\n" for m in EXTRA_MOUNTS)
-    compose = COMPOSE.replace("{hf_cache}", HF_CACHE_DIR).replace("{mounts}", mounts)
-    return {".env": envfile, "compose.yaml": compose, "entrypoint.sh": ENTRYPOINT}
+    mounts = [m if m.count(":") >= 2 else m + ":ro" for m in EXTRA_MOUNTS]
+    files = {".env": envfile}
+    ps = PATCHSETS.get(PATCHSET)
+    if ps:
+        for name, dst in ps["mounts"].items():
+            files[f"patches/{name}"] = open(os.path.join(PATCHSET_DIR, PATCHSET, name)).read()
+            mounts.append(f"./patches/{name}:{dst.replace('{revision}', ps.get('revision', ''))}:ro")
+    compose = COMPOSE.replace("{hf_cache}", HF_CACHE_DIR) \
+        .replace("{mounts}", "".join(f"      - {m}\n" for m in mounts)) \
+        .replace("{offline}", "1" if HF_OFFLINE else "0")
+    return {**files, "compose.yaml": compose, "entrypoint.sh": ENTRYPOINT}
 
 
 def preview():
@@ -673,7 +792,9 @@ def api_status():
                 "max_auto_restarts": MAX_AUTO_RESTARTS, "allow_reboot": ALLOW_REBOOT,
                 "stall_timeout_min": STALL_TIMEOUT_MIN, "unhealthy_grace_min": UNHEALTHY_GRACE_MIN,
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
-                "auto_reboot": AUTO_REBOOT, "state": load_state()},
+                "auto_reboot": AUTO_REBOOT, "state": load_state(),
+                "model": MODEL, "revision": REVISION, "image": VLLM_IMAGE,
+                "patchset": PATCHSET, "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE},
             "pubkey": pubkey()}
 
 

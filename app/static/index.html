@@ -61,6 +61,10 @@ input[type=text] { font: inherit; padding: 7px 10px; border-radius: 7px; border:
                    background: var(--bg); color: var(--fg); flex: 1; min-width: 200px; }
 details summary { cursor: pointer; color: var(--accent); }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.checks { display: grid; grid-template-columns: 22px 1fr; gap: 4px 6px; margin-top: 6px; }
+.checks .y { color: var(--ok); } .checks .n { color: var(--err); } .checks .o { color: var(--muted); }
+.checks pre { margin: 4px 0 6px; }
+.setnode h3 { font-size: 14px; margin: 14px 0 0; }
 </style>
 </head>
 <body>
@@ -81,6 +85,11 @@ details summary { cursor: pointer; color: var(--accent); }
     </div>
     <div class="kv" id="kv"></div>
     <div id="alerts"></div>
+  </section>
+
+  <section class="card" id="setupCard">
+    <h2>Setup</h2>
+    <div id="setup" class="muted">Loading…</div>
   </section>
 
   <section class="card">
@@ -204,24 +213,98 @@ function render() {
   $("#events").innerHTML = (S.events || []).slice(0, 40).map(e =>
     `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
     || `<span></span><span class="muted">No events yet.</span>`;
+  renderSetup();
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
     reboot button <b>${cfg.allow_reboot ? "on" : "off"}</b> · automatic attempts so far: ${cfg.state.attempts}`;
 }
 
-
-const CONFIRM = {
-  stop: "Stop the cluster? The API will stop responding.",
-  restart: "Restart the cluster? Startup takes about 20 minutes.",
-  reboot: "Reboot ALL nodes? The app also goes down for a while if it runs on the head.",
+const FIX = {
+  docker: ["Docker usable by the SSH user", h => `sudo usermod -aG docker $USER   # then log out and back in`],
+  nvidia_toolkit: ["NVIDIA Container Toolkit", h =>
+    `sudo apt install -y nvidia-container-toolkit\nsudo nvidia-ctk runtime configure --runtime=docker\nsudo systemctl restart docker`],
+  link_ip: [h => `Cluster link IP ${h}`, h =>
+    `ip -br link   # find the port the QSFP cable is in (state UP)\n` +
+    `sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses ${h}/24\n` +
+    `sudo nmcli con up cluster`],
+  head_reachable: ["Head reachable over the link", h =>
+    `# Check the cable, and that the link IPs of all nodes are in the same subnet\nping -c3 ${S.config.head}`],
+  disk_free: ["Disk space for the model", null],
+  reboot_sudo: ["Passwordless reboot (optional, for the reboot button)", h =>
+    `echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" | sudo tee /etc/sudoers.d/vllmapp-reboot\nsudo chmod 440 /etc/sudoers.d/vllmapp-reboot`],
 };
-document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", async () => {
-  const a = b.dataset.a;
+const gb = b => b == null ? "?" : (b / 1e9).toFixed(1) + " GB";
+
+let setupOpen = false;
+function renderSetup() {
+  const st = S.setup, cfg = S.config;
+  if (!st) return;
+  let h = "", todo = 0;
+  if (st.missing_env.length) { todo++;
+    h += `<div class="errbox">Set in Easypanel's env, then deploy: <b>${esc(st.missing_env.join(", "))}</b></div>`; }
+  if (st.patchset_missing) { todo++;
+    h += `<div class="errbox">PATCHES=${esc(st.patchset)} does not exist. Available: ${esc(cfg.patchsets.join(", ") || "none")}</div>`; }
+  for (const n of st.nodes) {
+    let rows = "";
+    const row = (ok, label, fix, opt) => {
+      if (!ok && !opt) todo++;
+      rows += `<span class="${ok ? "y" : opt ? "o" : "n"}">${ok ? "✓" : opt ? "–" : "✗"}</span><span>${label}${!ok && fix ? `<pre>${esc(fix)}</pre>` : ""}</span>`;
+    };
+    if (!n.reachable) {
+      row(false, "App can log in with its SSH key", "Run the install command under Configuration → Install the agent on this node");
+    } else if (n.agent_old) {
+      row(false, `Agent is version ${esc(n.agent)}, the app needs ${esc(st.agent_version)}`,
+          "Run the install command under Configuration → Install the agent on this node again");
+    } else {
+      for (const [k, c] of Object.entries(n.checks || {})) {
+        const [label, fix] = FIX[k] || [k, null];
+        let l = typeof label === "function" ? label(n.host) : label;
+        if (k === "link_ip" && c.ok) l += ` <span class="muted">(${esc(c.detail)})</span>`;
+        if (k === "disk_free") l += ` <span class="muted">(${gb(c.bytes)} free${c.need ? `, needs ${gb(c.need)}` : ""})</span>`;
+        row(c.ok, l, fix ? fix(n.host) : c.detail, c.optional);
+      }
+      const m = n.model;
+      if (m && st.model) {
+        const pct = st.size ? Math.min(100, 100 * m.bytes / st.size) : null;
+        const label = m.present ? `Model downloaded <span class="muted">(${gb(m.bytes)})</span>`
+          : n.downloading ? `Downloading model: ${gb(m.bytes)}${st.size ? ` of ${gb(st.size)} (${pct.toFixed(0)} %)` : ""}
+              <div class="bar"><i style="width:${pct || 0}%"></i></div><div class="lastlog">${esc(m.download?.last || "")}</div>`
+          : n.download_failed ? `Download failed (exit ${m.download.exit_code}): <span class="muted">${esc(m.download.last)}</span>`
+          : `Model not downloaded${m.bytes ? ` <span class="muted">(${gb(m.bytes)} so far)</span>` : ""}`;
+        row(m.present, label, null);
+      }
+    }
+    h += `<div class="setnode"><h3>${esc(n.role)} · ${esc(n.host)}</h3><div class="checks">${rows}</div></div>`;
+  }
+  if (!todo) h = `<details${setupOpen ? " open" : ""} id="setupDet"><summary>Show the checks per node</summary>${h}</details>`;
+  const busy = !!S.action?.name, dl = st.nodes.some(n => n.downloading);
+  if (st.model) h += `<div class="row" style="margin-top:12px">
+      <button class="${st.model_ready ? "" : "primary"}" id="dlBtn" ${busy || dl ? "disabled" : ""}>Download model</button>
+      ${dl ? `<button id="dlStop" ${busy ? "disabled" : ""}>Stop download</button>` : ""}
+      <span class="muted"><code>${esc(st.model)}</code>${st.revision ? ` @ ${esc(st.revision.slice(0, 10))}` : ""}${st.size ? ` · ${gb(st.size)}` : ""}
+      · on every node in parallel${st.patchset ? ` · patch set <b>${esc(st.patchset)}</b>` : ""}</span></div>`;
+  $("#setup").innerHTML = (todo ? `<p style="margin:0 0 6px">${todo} thing(s) left before the cluster can start. Commands with <code>sudo</code> run on the node itself; everything else the app does.</p>`
+    : `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`) + h;
+  $("#setupCard").querySelector("h2").textContent = todo ? `Setup · ${todo} left` : "Setup";
+  $("#setupDet")?.addEventListener("toggle", e => setupOpen = e.target.open);
+  $("#dlBtn")?.addEventListener("click", () => act("download"));
+  $("#dlStop")?.addEventListener("click", () => act("download-stop"));
+}
+
+async function act(a) {
   if (CONFIRM[a] && !confirm(CONFIRM[a])) return;
   const r = await fetch(`api/action/${a}`, {method: "POST"});
   if (!r.ok) alert((await r.json()).detail || r.status);
   refresh();
-}));
+}
+
+const CONFIRM = {
+  "download-stop": "Stop the download? What is already downloaded is kept and a new download resumes from it.",
+  stop: "Stop the cluster? The API will stop responding.",
+  restart: "Restart the cluster? Startup takes about 20 minutes.",
+  reboot: "Reboot ALL nodes? The app also goes down for a while if it runs on the head.",
+};
+document.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", () => act(b.dataset.a)));
 
 $("#testBtn").addEventListener("click", async () => {
   const b = $("#testBtn"); b.disabled = true; $("#testOut").innerHTML = `<pre>Waiting for response…</pre>`;
