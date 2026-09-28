@@ -65,6 +65,19 @@ details summary { cursor: pointer; color: var(--accent); }
 .checks .y { color: var(--ok); } .checks .n { color: var(--err); } .checks .o { color: var(--muted); }
 .checks pre { margin: 4px 0 6px; }
 .setnode h3 { font-size: 14px; margin: 14px 0 0; }
+.models { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }
+.mcard { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; cursor: pointer; display: block; }
+.mcard:hover { border-color: var(--accent); }
+.mcard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.mcard input { display: none; }
+.mcard b { display: block; }
+.mcard .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.mcard .notes { font-size: 12px; margin-top: 6px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; margin-left: 4px; }
+.badge.verified { color: var(--ok); } .badge.untested { color: var(--warn); } .badge.run { color: var(--accent); }
+.field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line);
+               background: var(--bg); color: var(--fg); }
 </style>
 </head>
 <body>
@@ -85,6 +98,29 @@ details summary { cursor: pointer; color: var(--accent); }
     </div>
     <div class="kv" id="kv"></div>
     <div id="alerts"></div>
+  </section>
+
+  <section class="card" id="modelCard">
+    <h2>Model</h2>
+    <div id="modelHead" class="muted">Loading…</div>
+    <div class="models" id="models"></div>
+    <div id="customBox" style="display:none;margin-top:10px" class="row">
+      <label class="field" style="flex:2">Hugging Face repo<input type="text" id="cuModel" placeholder="org/model-NVFP4"></label>
+      <label class="field">Name for clients<input type="text" id="cuServed" placeholder="my-model"></label>
+      <label class="field" style="flex:3">Extra vLLM arguments<input type="text" id="cuArgs" placeholder="--reasoning-parser qwen3"></label>
+    </div>
+    <details style="margin-top:10px"><summary>Advanced</summary>
+      <div class="row" style="margin-top:8px">
+        <label class="field">GPU memory share (0.30–0.95)<input type="text" id="mGpu" size="6"></label>
+        <label class="field">Max context (tokens)<input type="text" id="mLen" size="10"></label>
+        <span class="muted" style="font-size:12px;max-width:420px">Lower the GPU share if a node runs short of system
+          memory; lower the context if vLLM says the KV cache is too small.</span>
+      </div>
+    </details>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="mSave">Use this model</button>
+      <span class="muted" id="mInfo"></span>
+    </div>
   </section>
 
   <section class="card" id="setupCard">
@@ -123,7 +159,7 @@ details summary { cursor: pointer; color: var(--accent); }
   <section class="card">
     <h2>Configuration</h2>
     <div id="cfg" class="muted"></div>
-    <details style="margin-top:10px"><summary>Preview config from env against the nodes</summary>
+    <details style="margin-top:10px"><summary>Preview config against the nodes</summary>
       <div id="preview" class="muted" style="margin-top:8px">Loading…</div></details>
     <details style="margin-top:10px"><summary>Install the agent on a new node</summary>
       <p class="muted">Run on each node as the user the app logs in as. It adds the app's
@@ -151,7 +187,7 @@ async function refresh() {
 
 function render() {
   const c = S.cluster || {}, cfg = S.config;
-  $("#sub").textContent = `${cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · updated ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
+  $("#sub").textContent = `${(c.models || []).join(", ") || cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · updated ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
   const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err"
     : ["starting", "not responding"].includes(c.state) ? "warn" : "err";
   $("#dot").className = "dot " + cls;
@@ -214,6 +250,7 @@ function render() {
     `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
     || `<span></span><span class="muted">No events yet.</span>`;
   renderSetup();
+  if (M) drawModels(true);  // header only: running model and pending restart
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
     reboot button <b>${cfg.allow_reboot ? "on" : "off"}</b> · automatic attempts so far: ${cfg.state.attempts}`;
@@ -242,6 +279,8 @@ function renderSetup() {
   let h = "", todo = 0;
   if (st.missing_env.length) { todo++;
     h += `<div class="errbox">Set in Easypanel's env, then deploy: <b>${esc(st.missing_env.join(", "))}</b></div>`; }
+  if (st.no_model) { todo++;
+    h += `<div class="errbox">Pick a model under <b>Model</b> first.</div>`; }
   if (st.patchset_missing) { todo++;
     h += `<div class="errbox">PATCHES=${esc(st.patchset)} does not exist. Available: ${esc(cfg.patchsets.join(", ") || "none")}</div>`; }
   for (const n of st.nodes) {
@@ -291,6 +330,50 @@ function renderSetup() {
   $("#dlStop")?.addEventListener("click", () => act("download-stop"));
 }
 
+let M = null, pick = null;
+async function loadModels() {
+  M = await (await fetch("api/models")).json();
+  pick = M.settings.id || M.current.id || null;
+  drawModels();
+}
+function drawModels(headOnly) {
+  const cur = M.current, running = S?.cluster?.models || [];
+  const locked = cur.locked.length;
+  $("#modelHead").innerHTML = (cur.model
+      ? `Chosen: <b>${esc(cur.entry.name || cur.model)}</b>` : `No model chosen yet — pick one below.`)
+    + (running.length ? ` · running now: <b>${esc(running.join(", "))}</b>` : "")
+    + (S?.setup?.pending ? ` · <span class="badge untested">Restart to apply</span>` : "")
+    + (locked ? `<div class="warnbox">${esc(cur.locked.map(k => ({model:"MODEL",served_model_name:"SERVED_MODEL_NAME",image:"VLLM_IMAGE",
+        gpu_mem_util:"GPU_MEM_UTIL",max_model_len:"MAX_MODEL_LEN",vllm_args:"VLLM_EXTRA_ARGS",revision:"MODEL_REVISION"})[k]).join(", "))}
+        ${locked > 1 ? "are" : "is"} set in Easypanel's env and override${locked > 1 ? "" : "s"} the choice here. Remove ${locked > 1 ? "them" : "it"} there to choose here.</div>` : "");
+  if (headOnly) return;
+  const card = (id, title, meta, notes, badge) => `<label class="mcard ${pick === id ? "sel" : ""}">
+      <input type="radio" name="m" value="${esc(id)}" ${pick === id ? "checked" : ""}>
+      <b>${esc(title)} ${badge}</b><div class="meta">${meta}</div>${notes ? `<div class="notes">${esc(notes)}</div>` : ""}</label>`;
+  $("#models").innerHTML = M.catalog.map(m => card(m.id, m.name,
+      `${m.size_gb} GB · ${m.min_nodes > 1 ? `needs ${m.min_nodes} nodes` : "fits on one node"} · <code>${esc(m.model)}</code>`,
+      m.notes, `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`
+        + (cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : "")))
+    .join("") + card("custom", "Other model from Hugging Face", "Any repo vLLM supports, NVFP4 recommended", "You set the arguments. Nothing is checked in advance.", "");
+  const e = pick === "custom" ? (M.settings.custom || {}) : M.catalog.find(m => m.id === pick) || {};
+  const same = pick === M.settings.id;
+  $("#mGpu").value = (same && M.settings.gpu_mem_util) || e.gpu_mem_util || "";
+  $("#mLen").value = (same && M.settings.max_model_len) || e.max_model_len || "";
+  $("#customBox").style.display = pick === "custom" ? "" : "none";
+  if (pick === "custom") { $("#cuModel").value = e.model || ""; $("#cuServed").value = e.served_model_name || ""; $("#cuArgs").value = e.vllm_args || ""; }
+  document.querySelectorAll("input[name=m]").forEach(r => r.addEventListener("change", () => { pick = r.value; drawModels(); }));
+}
+$("#mSave").addEventListener("click", async () => {
+  if (!pick) return alert("Pick a model first.");
+  const body = {id: pick, gpu_mem_util: $("#mGpu").value.trim(), max_model_len: $("#mLen").value.trim()};
+  if (pick === "custom") body.custom = {model: $("#cuModel").value.trim(), served_model_name: $("#cuServed").value.trim(), vllm_args: $("#cuArgs").value.trim()};
+  const r = await fetch("api/model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const d = await r.json();
+  if (!r.ok) return alert(d.detail || r.status);
+  $("#mInfo").textContent = "Saved. Download the model under Setup, then press Restart.";
+  await loadModels(); refresh();
+});
+
 async function act(a) {
   if (CONFIRM[a] && !confirm(CONFIRM[a])) return;
   const r = await fetch(`api/action/${a}`, {method: "POST"});
@@ -330,7 +413,7 @@ document.querySelector("details:has(#install)").addEventListener("toggle", async
   if (e.target.open) $("#install").textContent = await (await fetch("api/install")).text();
 });
 
-refresh(); setInterval(refresh, 5000);
+refresh().then(loadModels); setInterval(refresh, 5000);
 </script>
 </body>
 </html>

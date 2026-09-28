@@ -1,0 +1,15 @@
+{
+  "order": 5,
+  "id": "qwen3.8-27b",
+  "name": "Qwen3.8-27B (Unsloth NVFP4)",
+  "model": "unsloth/Qwen3.8-27B-NVFP4",
+  "served_model_name": "qwen3.8-27b",
+  "size_gb": 23.4,
+  "min_nodes": 1,
+  "status": "untested",
+  "gpu_mem_util": "0.80",
+  "max_model_len": "262144",
+  "vllm_args": "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --language-model-only --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "Dense 27B, Unsloth's recommended all-round model for DGX Spark. Fits on one Spark; here it runs across the cluster.",
+  "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
+}

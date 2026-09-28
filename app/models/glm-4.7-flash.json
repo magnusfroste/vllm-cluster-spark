@@ -1,0 +1,15 @@
+{
+  "order": 7,
+  "id": "glm-4.7-flash",
+  "name": "GLM-4.7-Flash (Unsloth NVFP4)",
+  "model": "unsloth/GLM-4.7-Flash-NVFP4",
+  "served_model_name": "glm-4.7-flash",
+  "size_gb": 21.3,
+  "min_nodes": 1,
+  "status": "untested",
+  "gpu_mem_util": "0.80",
+  "max_model_len": "131072",
+  "vllm_args": "--attention-backend TRITON_MLA --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "Small, fast GLM. The Unsloth card asks for the TRITON_MLA attention backend.",
+  "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
+}

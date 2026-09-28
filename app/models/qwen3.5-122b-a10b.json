@@ -1,0 +1,15 @@
+{
+  "order": 2,
+  "id": "qwen3.5-122b-a10b",
+  "name": "Qwen3.5-122B-A10B (Unsloth NVFP4)",
+  "model": "unsloth/Qwen3.5-122B-A10B-NVFP4",
+  "served_model_name": "qwen3.5-122b",
+  "size_gb": 79.1,
+  "min_nodes": 2,
+  "status": "untested",
+  "gpu_mem_util": "0.80",
+  "max_model_len": "262144",
+  "vllm_args": "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --language-model-only --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "MoE with 10B active. Settings from the Qwen and Unsloth model cards; text only, which frees memory for KV cache.",
+  "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
+}

@@ -6,9 +6,10 @@ in [Easypanel](https://easypanel.io) on the head node and controls every node ov
 
 Once the app is deployed, everything happens from its page:
 
+- **Model:** pick a ready-made model from the catalog, or any model on Hugging Face
 - **Setup:** checks each node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space)
   and shows the exact command for anything that needs `sudo`
-- **Model:** downloads the model on every node in parallel, with progress
+- **Download:** fetches the model on every node in parallel, with progress
 - **Config:** writes `.env`, `compose.yaml`, `entrypoint.sh` and any model patches to every node.
   The network interface and RoCE HCAs are detected per node
 - **Control:** start, stop, restart, pull image, reboot, test prompt
@@ -37,11 +38,10 @@ Create a project and an **App** service (not Compose) in the head node's Easypan
   SSH_USER=youruser
   ADMIN_PASSWORD=choose-one
   API_KEY=choose-a-long-random-key
-  MODEL=local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
-  SERVED_MODEL_NAME=glm-5.3-flash
-  VLLM_IMAGE=ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563
   HF_TOKEN=hf_...
   ```
+  The env only holds what the app can't know by itself: the nodes, passwords and keys. You pick
+  the model in the app.
   `HEAD_HOST` and `WORKER_HOSTS` are the IPs the nodes will have **on the cluster link**, not
   on your LAN. Pick them now: any private /24 works, as long as nothing else on the node uses it.
 - **Mounts:** a bind mount from a host directory, for example `/home/youruser/vllmapp-data`,
@@ -60,7 +60,17 @@ head included, as `SSH_USER`. It installs a small agent in `~/.local/bin` and ad
 key to `authorized_keys` with a forced command and `restrict`, so the key can only run the
 agent's allowlisted commands. Run it again whenever the Setup card says an agent is outdated.
 
-## 3. Work through the Setup card
+## 3. Pick a model
+
+The **Model** card lists ready-made models with settings that suit DGX Spark: the vLLM image,
+the tool and reasoning parsers, context length and GPU memory share. **Verified** means we have
+run it on two Sparks and checked the answers. **Untested** means the settings come from the
+model card and have not been run here yet. You can also pick any other Hugging Face repo and
+give the vLLM arguments yourself. GPU memory share and max context are under **Advanced**.
+
+Press **Use this model**. Nothing happens to a running cluster until you press Restart.
+
+## 4. Work through the Setup card
 
 The **Setup** card shows every node with a checklist. Each item that fails comes with the
 command to fix it. These are one-time steps on the node itself, since they need root:
@@ -79,7 +89,7 @@ shows the bytes on disk per node. xet and `hf_transfer` are turned off, since bo
 large downloads on DGX Spark. The download continues if you close the page, and a stopped
 download resumes where it left off.
 
-## 4. Start
+## 5. Start
 
 Press **Start**. The app checks that the model is downloaded and that RoCE is up on every node,
 writes the config, starts the workers and then the head. Startup for a large model takes
@@ -88,11 +98,15 @@ writes the config, starts the workers and then the head. Startup for a large mod
 
 The API is OpenAI-compatible at `http://<HEAD_HOST>:8000/v1`, with `API_KEY` as the bearer token.
 
-## Changing the config
+## Changing the model or the config
 
-Change the env in Easypanel and deploy. **A deploy only restarts the app, never the cluster.**
-New values take effect on the next **Start** or **Restart** in the app, which writes the config
-to every node first. **Configuration → Preview config** shows the diff against what the nodes have now.
+Pick another model in the app, download it, and press **Restart**. The page says
+**Restart to apply** while the running model differs from the chosen one.
+
+Changes to the env in Easypanel need a deploy. **A deploy only restarts the app, never the
+cluster.** Every change takes effect on the next **Start** or **Restart**, which writes the
+config to every node first. **Configuration → Preview config** shows the diff against what the
+nodes have now.
 
 ## Env reference
 
@@ -104,16 +118,9 @@ to every node first. **Configuration → Preview config** shows the diff against
 | `SSH_PORT` | `22` | |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / – | login for the page (password required) |
 | `API_KEY` | – | vLLM's API key (required) |
-| `MODEL` | – | Hugging Face repo |
-| `SERVED_MODEL_NAME` | – | the model name clients use |
-| `VLLM_IMAGE` | – | vLLM image, preferably pinned to a digest |
 | `HF_TOKEN` | – | for gated models and the download |
 | `HF_CACHE_DIR` | `${HOME}/.cache/huggingface` | on the nodes |
-| `MODEL_REVISION` | from the patch set, else `main` | pins the model to a commit |
-| `GPU_MEM_UTIL` | vLLM's default | `--gpu-memory-utilization` |
-| `MAX_MODEL_LEN` | vLLM's default | `--max-model-len` |
 | `TP_SIZE` | number of nodes | `--tensor-parallel-size` |
-| `VLLM_EXTRA_ARGS` | – | anything else for `vllm serve` |
 | `PATCHES` | `auto` | `auto` picks the patch set that lists `MODEL`, `none` turns patches off, or a folder name in `app/patchsets/` |
 | `HF_OFFLINE` | `true` | vLLM runs with `HF_HUB_OFFLINE=1`, so only the app's download fetches the model |
 | `EXTRA_MOUNTS` | – | comma-separated `src:dst`, relative to the cluster dir, mounted `:ro` |
@@ -129,7 +136,37 @@ to every node first. **Configuration → Preview config** shows the diff against
 | `MEM_WARN_GIB` | `4` | warn when a node has less free memory than this |
 | `VLLM_PORT`, `POLL_SECONDS` | `8000`, `15` | |
 
+The model settings are normally chosen in the app. Setting any of these in the env overrides
+the app's choice, and the page shows them as locked: `MODEL`, `SERVED_MODEL_NAME`,
+`VLLM_IMAGE`, `GPU_MEM_UTIL`, `MAX_MODEL_LEN`, `VLLM_EXTRA_ARGS`, `MODEL_REVISION`.
+
 Only run one vllmapp per cluster, since each one does auto-recover on its own.
+
+## The model catalog
+
+Each ready-made model is a file in `app/models/`:
+
+```json
+{
+  "id": "qwen3.5-122b-a10b",
+  "name": "Qwen3.5-122B-A10B (Unsloth NVFP4)",
+  "model": "unsloth/Qwen3.5-122B-A10B-NVFP4",
+  "served_model_name": "qwen3.5-122b",
+  "image": "ghcr.io/…@sha256:…",
+  "vllm_args": "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder …",
+  "gpu_mem_util": "0.80",
+  "max_model_len": "262144",
+  "size_gb": 79.1,
+  "min_nodes": 2,
+  "status": "untested",
+  "notes": "Shown on the model's card in the app."
+}
+```
+
+Optional: `revision` pins a commit, and `patchset` names a folder in `app/patchsets/`. Set
+`status` to `verified` once the model has run on real hardware and answered a checkable prompt
+correctly, and write what you saw in `notes`. Models under ~100 GB fit on a single Spark, but
+the app always runs across all nodes.
 
 ## Model patch sets
 

@@ -38,21 +38,14 @@ CLUSTER_DIR = env("CLUSTER_DIR", "~/vllm-cluster")
 CONFIG_MODE = env("CONFIG_MODE", "managed")  # managed | existing
 VLLM_PORT = env("VLLM_PORT", "8000")
 
-VLLM_IMAGE = env("VLLM_IMAGE")
-MODEL = env("MODEL")
-SERVED_MODEL_NAME = env("SERVED_MODEL_NAME")
 TP_SIZE = env("TP_SIZE")
-GPU_MEM_UTIL = env("GPU_MEM_UTIL")
-MAX_MODEL_LEN = env("MAX_MODEL_LEN")
-VLLM_EXTRA_ARGS = env("VLLM_EXTRA_ARGS")
 API_KEY = env("API_KEY")
 HF_TOKEN = env("HF_TOKEN")
 HF_CACHE_DIR = env("HF_CACHE_DIR", "${HOME}/.cache/huggingface")
 EXTRA_MOUNTS = [m.strip() for m in env("EXTRA_MOUNTS").split(",") if m.strip()]
 IF_NAMES = env("IF_NAMES")  # optional override, ;-separated in node order
 IB_HCAS = env("IB_HCAS")
-PATCHES = env("PATCHES", "auto")  # auto (by MODEL) | none | name of a folder in patchsets/
-MODEL_REVISION = env("MODEL_REVISION")
+PATCHES = env("PATCHES", "auto")  # auto (by model) | none | name of a folder in patchsets/
 HF_OFFLINE = envbool("HF_OFFLINE", True)  # vLLM never downloads; the app's download does
 
 ADMIN_USER = env("ADMIN_USER", "admin")
@@ -71,6 +64,7 @@ POLL_SECONDS = float(env("POLL_SECONDS", "15"))
 DATA = env("DATA_DIR", "/data")
 KEY = os.path.join(DATA, "id_ed25519")
 STATE_FILE = os.path.join(DATA, "state.json")
+SETTINGS_FILE = os.path.join(DATA, "settings.json")  # the model chosen in the app
 EVENTS_FILE = os.path.join(DATA, "events.log")
 
 NODES = ([{"role": "head", "host": HEAD_HOST}] if HEAD_HOST else []) + \
@@ -90,9 +84,61 @@ def load_patchsets():
 
 
 PATCHSETS = load_patchsets()
-PATCHSET = (next((n for n, ps in PATCHSETS.items() if MODEL in ps.get("models", [])), None)
-            if PATCHES == "auto" else None if PATCHES in ("", "none") else PATCHES)
-REVISION = MODEL_REVISION or (PATCHSETS.get(PATCHSET) or {}).get("revision", "")
+
+
+def load_catalog():
+    """Ready-made models in models/*.json, in their display order."""
+    d = os.path.join(os.path.dirname(__file__), "models")
+    cat = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        try:
+            cat.append(json.load(open(os.path.join(d, name))))
+        except (OSError, ValueError):
+            pass
+    return {m["id"]: m for m in sorted(cat, key=lambda m: m.get("order", 99))}
+
+
+CATALOG = load_catalog()
+# Model settings the app owns. If one is set in the env it wins, and the page shows it as locked.
+MODEL_KEYS = {"model": "MODEL", "served_model_name": "SERVED_MODEL_NAME", "image": "VLLM_IMAGE",
+              "gpu_mem_util": "GPU_MEM_UTIL", "max_model_len": "MAX_MODEL_LEN",
+              "vllm_args": "VLLM_EXTRA_ARGS", "revision": "MODEL_REVISION"}
+
+
+def load_settings():
+    try:
+        return json.load(open(SETTINGS_FILE))
+    except (OSError, ValueError):
+        return {}
+
+
+def cfg():
+    """The model config in effect: env > what was chosen in the app > the catalog entry."""
+    st = load_settings()
+    env_model = env("MODEL")
+    entry = (next((m for m in CATALOG.values() if m["model"] == env_model), None) if env_model
+             else CATALOG.get(st.get("id")) or (st.get("custom") and {"id": "custom", **st["custom"]})
+             or None)
+    entry = entry or {}
+    c = {"id": entry.get("id"), "entry": entry, "locked": []}
+    for k, e in MODEL_KEYS.items():
+        v = env(e)
+        if v:
+            c["locked"].append(k)
+        elif k in ("gpu_mem_util", "max_model_len") and st.get(k) and st.get("id") == entry.get("id"):
+            v = str(st[k])
+        else:
+            v = str(entry.get(k) or "")
+        c[k] = v
+    model = c["model"]
+    c["patchset"] = (entry.get("patchset") or next((n for n, ps in PATCHSETS.items()
+                                                    if model in ps.get("models", [])), None)
+                     ) if PATCHES == "auto" else None if PATCHES in ("", "none") else PATCHES
+    if not c["revision"]:
+        c["revision"] = (PATCHSETS.get(c["patchset"]) or {}).get("revision", "")
+    if c["model"] and not c["image"]:  # a custom model runs on the image of the verified entries
+        c["image"] = next((m["image"] for m in CATALOG.values() if m.get("status") == "verified"), "")
+    return c
 
 SECRETS = [s for s in (API_KEY, HF_TOKEN, ADMIN_PASSWORD) if len(s) >= 6]
 
@@ -232,7 +278,8 @@ def http_get(url, headers=None, timeout=5):
 
 def node_status(n):
     t0 = now()
-    args = f" {n['host']} {HEAD_HOST} {shlex.quote(HF_CACHE_DIR)} {MODEL or '-'} {REVISION}"
+    c = cfg()
+    args = f" {n['host']} {HEAD_HOST} {shlex.quote(HF_CACHE_DIR)} {c['model'] or '-'} {c['revision']}"
     rc, st, err = ssh(n["host"], "status" + args.rstrip(), timeout=30)
     res = {**n, "reachable": st is not None and "error" not in (st or {}),
            "latency_ms": int((now() - t0) * 1000), "error": None if st else redact(err)[-300:]}
@@ -343,7 +390,7 @@ def poll_once():
             "workers_down": [n["host"] for n in nodes[1:]
                              if not (n.get("container") or {}).get("running")],
         },
-        "setup": setup_summary(nodes),
+        "setup": setup_summary(nodes, models),
         "action": dict(CURRENT_ACTION),
     })
     return STATUS
@@ -354,17 +401,19 @@ _model_size = {}
 
 def model_size():
     """Total size of the model repo from the HF API (cached), for download progress and disk check."""
-    if not MODEL:
+    c = cfg()
+    if not c["model"]:
         return None
-    size, checked = _model_size.get("v"), _model_size.get("ts", 0)
+    key = (c["model"], c["revision"])
+    size, checked = _model_size.get(key), _model_size.get(("ts",) + key, 0)
     if size is None and now() - checked > 600:  # a failed lookup is retried every 10 min
-        _model_size["ts"] = now()
+        _model_size[("ts",) + key] = now()
         hdr = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-        code, body = http_get(f"https://huggingface.co/api/models/{MODEL}/revision/"
-                              f"{REVISION or 'main'}?blobs=true", hdr, timeout=15)
+        code, body = http_get(f"https://huggingface.co/api/models/{c['model']}/revision/"
+                              f"{c['revision'] or 'main'}?blobs=true", hdr, timeout=15)
         try:
             if code == 200:
-                size = _model_size["v"] = sum(f.get("size") or 0 for f in json.loads(body)["siblings"])
+                size = _model_size[key] = sum(f.get("size") or 0 for f in json.loads(body)["siblings"])
         except (ValueError, KeyError):
             pass
     return size
@@ -374,12 +423,11 @@ AGENT_VERSION = re.search(r'^VERSION = "(\d+)"', open(os.path.join(os.path.dirna
                           "vllmapp-agent")).read(), re.M).group(1)
 
 
-def setup_summary(nodes):
+def setup_summary(nodes, running=()):
     """What still needs doing before the cluster can start: root fixes per node, env, model."""
     size = model_size()
-    missing = [k for k, v in (("HEAD_HOST", HEAD_HOST), ("API_KEY", API_KEY),
-                              ("MODEL", MODEL), ("VLLM_IMAGE", VLLM_IMAGE))
-               if not v and (CONFIG_MODE == "managed" or k in ("HEAD_HOST", "API_KEY"))]
+    c = cfg()
+    missing = [k for k, v in (("HEAD_HOST", HEAD_HOST), ("API_KEY", API_KEY)) if not v]
     per = []
     for n in nodes:
         m = n.get("model") or {}
@@ -394,10 +442,21 @@ def setup_summary(nodes):
                     "checks": checks, "model": m or None,
                     "downloading": bool(dl.get("running")),
                     "download_failed": bool(dl) and not dl.get("running") and dl.get("exit_code") != 0})
-    return {"missing_env": missing, "model": MODEL, "revision": REVISION, "size": size,
-            "patchset": PATCHSET, "patchset_missing": bool(PATCHSET) and PATCHSET not in PATCHSETS,
+    applied = load_state().get("applied")
+    return {"missing_env": missing, "model": c["model"], "revision": c["revision"], "size": size,
+            "no_model": CONFIG_MODE == "managed" and not (c["model"] and c["image"]),
+            "patchset": c["patchset"],
+            "patchset_missing": bool(c["patchset"]) and c["patchset"] not in PATCHSETS,
             "agent_version": AGENT_VERSION, "nodes": per,
-            "model_ready": bool(MODEL) and all((p["model"] or {}).get("present") for p in per)}
+            "pending": CONFIG_MODE == "managed" and (
+                applied is not None and applied != applied_key(c)
+                or bool(running) and bool(c["served_model_name"]) and c["served_model_name"] not in running),
+            "model_ready": bool(c["model"]) and all((p["model"] or {}).get("present") for p in per)}
+
+
+def applied_key(c):
+    """What decides the rendered config, to tell whether a restart is needed to apply it."""
+    return {k: c[k] for k in (*MODEL_KEYS, "patchset")}
 
 
 def auto_recover():
@@ -484,12 +543,15 @@ def preflight():
 
 def model_check():
     """Managed mode: the model must be downloaded on every node (vLLM runs offline)."""
-    if CONFIG_MODE != "managed" or not MODEL:
+    c = cfg()
+    if CONFIG_MODE != "managed":
         return
-    s = STATUS.get("setup") or {}
+    if not (c["model"] and c["image"]):
+        raise RuntimeError("no model chosen — pick one under Model")
+    s = poll_once().get("setup") or {}  # fresh, in case the model was just changed
     bad = [p["host"] for p in s.get("nodes", []) if p.get("model") and not p["model"].get("present")]
     if bad:
-        raise RuntimeError(f"{MODEL} is not fully downloaded on {', '.join(bad)} — use Download model first")
+        raise RuntimeError(f"{c['model']} is not fully downloaded on {', '.join(bad)} — use Download model first")
 
 
 def do_start():
@@ -533,13 +595,14 @@ def do_pull():
 
 
 def write_config():
-    """Managed mode: write the config from env to every node before the cluster starts.
+    """Managed mode: write the config to every node before the cluster starts.
     An app deploy never gets here, so new env only takes effect on Start/Restart."""
     if CONFIG_MODE != "managed":
         return
     failed = False
+    c = cfg()
     for i, n in enumerate(NODES):
-        for name, content in render(i, n).items():
+        for name, content in render(i, n, c).items():
             rc, res, err = ssh(n["host"], f"put {shlex.quote(name)}", input=content, timeout=30)
             good = rc == 0 and res and res.get("rc") == 0
             event(f"{n['role']} {n['host']}: wrote {name}"
@@ -549,12 +612,16 @@ def write_config():
             failed |= not good
     if failed:
         raise RuntimeError("could not write the config to every node — cluster not started")
+    s = load_state()
+    s["applied"] = applied_key(c)
+    save_state(s)
 
 
 def do_download():
-    if not (MODEL and VLLM_IMAGE):
-        raise RuntimeError("MODEL and VLLM_IMAGE must be set")
-    cmd = f"download {shlex.quote(VLLM_IMAGE)} {MODEL} {shlex.quote(HF_CACHE_DIR)} {REVISION}".rstrip()
+    c = cfg()
+    if not (c["model"] and c["image"]):
+        raise RuntimeError("no model chosen — pick one under Model")
+    cmd = f"download {shlex.quote(c['image'])} {c['model']} {shlex.quote(HF_CACHE_DIR)} {c['revision']}".rstrip()
 
     def one(n):
         rc, res, err = ssh(n["host"], cmd, timeout=3600, input=HF_TOKEN)
@@ -602,7 +669,7 @@ def start_action(name, auto=False):
 
 
 # ---------- managed mode: render config ----------
-COMPOSE = """# Generated by vllmapp — change it in Easypanel's env, not here
+COMPOSE = """# Generated by vllmapp — change it in the app, not here
 services:
   vllm:
     image: ${VLLM_IMAGE}
@@ -688,42 +755,43 @@ def net_for(i, n):
     return _net_cache[n["host"]]
 
 
-def vllm_args():
+def vllm_args(c):
     a = []
-    if SERVED_MODEL_NAME:
-        a += ["--served-model-name", SERVED_MODEL_NAME]
-    if MAX_MODEL_LEN:
-        a += ["--max-model-len", MAX_MODEL_LEN]
-    if GPU_MEM_UTIL:
-        a += ["--gpu-memory-utilization", GPU_MEM_UTIL]
-    if REVISION and "--revision" not in VLLM_EXTRA_ARGS:
-        a += ["--revision", REVISION]
-    return " ".join(a + shlex.split(VLLM_EXTRA_ARGS))
+    if c["served_model_name"]:
+        a += ["--served-model-name", c["served_model_name"]]
+    if c["max_model_len"]:
+        a += ["--max-model-len", c["max_model_len"]]
+    if c["gpu_mem_util"]:
+        a += ["--gpu-memory-utilization", c["gpu_mem_util"]]
+    if c["revision"] and "--revision" not in c["vllm_args"]:
+        a += ["--revision", c["revision"]]
+    return " ".join(a + shlex.split(c["vllm_args"]))
 
 
-def render(i, n):
+def render(i, n, c=None):
+    c = c or cfg()
     iface, hca = net_for(i, n)
     envfile = "\n".join([
-        "# Generated by vllmapp — change it in Easypanel's env, not here",
+        "# Generated by vllmapp — change it in the app, not here",
         f"ROLE={n['role']}",
-        f"VLLM_IMAGE={VLLM_IMAGE}",
+        f"VLLM_IMAGE={c['image']}",
         f"HOST_IP={n['host']}",
         f"HEAD_IP={HEAD_HOST}",
         f"IF_NAME={iface}",
         f"IB_HCA={hca}",
         f"NUM_NODES={len(NODES)}",
         f"TP_SIZE={TP_SIZE or len(NODES)}",
-        f"MODEL={MODEL}",
-        f"VLLM_EXTRA_ARGS={vllm_args()}",
+        f"MODEL={c['model']}",
+        f"VLLM_EXTRA_ARGS={vllm_args(c)}",
         f"VLLM_API_KEY={API_KEY}",
         f"HF_TOKEN={HF_TOKEN}",
     ]) + "\n"
     mounts = [m if m.count(":") >= 2 else m + ":ro" for m in EXTRA_MOUNTS]
     files = {".env": envfile}
-    ps = PATCHSETS.get(PATCHSET)
+    ps = PATCHSETS.get(c["patchset"])
     if ps:
         for name, dst in ps["mounts"].items():
-            files[f"patches/{name}"] = open(os.path.join(PATCHSET_DIR, PATCHSET, name)).read()
+            files[f"patches/{name}"] = open(os.path.join(PATCHSET_DIR, c["patchset"], name)).read()
             mounts.append(f"./patches/{name}:{dst.replace('{revision}', ps.get('revision', ''))}:ro")
     compose = COMPOSE.replace("{hf_cache}", HF_CACHE_DIR) \
         .replace("{mounts}", "".join(f"      - {m}\n" for m in mounts)) \
@@ -740,7 +808,7 @@ def preview():
             cur = (res or {}).get("content", "")
             diff = "".join(difflib.unified_diff(
                 redact(cur).splitlines(True), redact(new).splitlines(True),
-                f"{n['host']}:{name} (current)", f"{n['host']}:{name} (from env)"))
+                f"{n['host']}:{name} (current)", f"{n['host']}:{name} (new)"))
             files.append({"name": name, "exists": (res or {}).get("exists", False),
                           "diff": diff, "rendered": redact(new)})
         out.append({**n, "files": files})
@@ -787,14 +855,13 @@ def api_status():
             "config": {
                 "head": HEAD_HOST, "workers": WORKER_HOSTS, "ssh_user": SSH_USER,
                 "cluster_dir": CLUSTER_DIR, "mode": CONFIG_MODE,
-                "served_model_name": SERVED_MODEL_NAME, "port": VLLM_PORT,
+                "served_model_name": cfg()["served_model_name"], "port": VLLM_PORT,
                 "auto_recover": AUTO_RECOVER, "hang_timeout_min": HANG_TIMEOUT_MIN,
                 "max_auto_restarts": MAX_AUTO_RESTARTS, "allow_reboot": ALLOW_REBOOT,
                 "stall_timeout_min": STALL_TIMEOUT_MIN, "unhealthy_grace_min": UNHEALTHY_GRACE_MIN,
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "auto_reboot": AUTO_REBOOT, "state": load_state(),
-                "model": MODEL, "revision": REVISION, "image": VLLM_IMAGE,
-                "patchset": PATCHSET, "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE},
+                "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE},
             "pubkey": pubkey()}
 
 
@@ -808,11 +875,58 @@ def api_action(name: str):
     return {"started": name}
 
 
+@app.get("/api/models", dependencies=[Depends(auth)])
+def api_models():
+    return {"catalog": list(CATALOG.values()), "current": cfg(), "settings": load_settings(),
+            "nodes": len(NODES)}
+
+
+@app.post("/api/model", dependencies=[Depends(auth)])
+async def api_model(request: Request):
+    """Choose a model. It takes effect on the next Start or Restart, like any config change."""
+    b = await request.json()
+    st = {"id": b.get("id")}
+    if st["id"] == "custom":
+        cu = b.get("custom") or {}
+        if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", cu.get("model", "")):
+            raise HTTPException(400, "the model must be a Hugging Face repo, like org/name")
+        st["custom"] = {"model": cu["model"],
+                        "name": cu["model"],
+                        "served_model_name": re.sub(r"[^A-Za-z0-9_.-]", "", cu.get("served_model_name") or "")
+                        or cu["model"].split("/")[-1].lower(),
+                        "vllm_args": str(cu.get("vllm_args") or "")[:2000]}
+        min_nodes = 1
+    elif st["id"] in CATALOG:
+        min_nodes = CATALOG[st["id"]].get("min_nodes", 1)
+    else:
+        raise HTTPException(400, "unknown model")
+    if len(NODES) < min_nodes:
+        raise HTTPException(400, f"this model needs at least {min_nodes} nodes")
+    try:
+        if b.get("gpu_mem_util"):
+            g = float(b["gpu_mem_util"])
+            assert 0.3 <= g <= 0.95
+            st["gpu_mem_util"] = f"{g:.2f}"
+        if b.get("max_model_len"):
+            n = int(b["max_model_len"])
+            assert 1024 <= n <= 1048576
+            st["max_model_len"] = str(n)
+    except (ValueError, AssertionError):
+        raise HTTPException(400, "GPU memory must be 0.30–0.95 and context 1024–1048576 tokens")
+    tmp = SETTINGS_FILE + ".tmp"
+    json.dump(st, open(tmp, "w"), indent=2)
+    os.replace(tmp, SETTINGS_FILE)
+    c = cfg()
+    event(f"model set to {c['model']}" + (f" (env overrides: {', '.join(c['locked'])})" if c["locked"] else "")
+          + " — download it, then Restart to apply")
+    return {"ok": True, "current": c}
+
+
 @app.post("/api/test", dependencies=[Depends(auth)])
 async def api_test(request: Request):
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
     prompt = (body.get("prompt") or "What is 17*23? Answer with the number only.")[:2000]
-    model = SERVED_MODEL_NAME or (STATUS["cluster"].get("models") or [""])[0]
+    model = (STATUS["cluster"].get("models") or [cfg()["served_model_name"]])[0]
     req = urllib.request.Request(
         f"http://{HEAD_HOST}:{VLLM_PORT}/v1/chat/completions",
         data=json.dumps({"model": model, "max_tokens": 512,
