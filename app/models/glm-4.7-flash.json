@@ -1,5 +1,5 @@
 {
-  "order": 8,
+  "order": 9,
   "id": "glm-4.7-flash",
   "name": "GLM-4.7-Flash (Unsloth NVFP4)",
   "model": "unsloth/GLM-4.7-Flash-NVFP4",

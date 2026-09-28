@@ -1,0 +1,15 @@
+{
+  "order": 2,
+  "id": "mimo-v2.6-flash",
+  "name": "MiMo-V2.6-Flash-RL (Xiaomi FP8)",
+  "model": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
+  "served_model_name": "mimo-v2.6-flash",
+  "size_gb": 177.8,
+  "min_nodes": 2,
+  "status": "untested",
+  "gpu_mem_util": "0.83",
+  "max_model_len": "262144",
+  "vllm_args": "--trust-remote-code --reasoning-parser mimo --tool-call-parser mimo --enable-auto-tool-choice --generation-config vllm --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "Xiaomi's MoE, 309B total / 15B active, sliding-window attention so the KV cache is cheap; up to 1M context. Xiaomi's own FP8 build, the same size class as GLM-5.3-Flash. Settings from the model card; recommended sampling temperature 1.0, top_p 0.95.",
+  "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
+}

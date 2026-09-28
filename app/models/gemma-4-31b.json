@@ -1,5 +1,5 @@
 {
-  "order": 7,
+  "order": 8,
   "id": "gemma-4-31b",
   "name": "Gemma 4 31B-it (Unsloth NVFP4)",
   "model": "unsloth/gemma-4-31B-it-NVFP4",

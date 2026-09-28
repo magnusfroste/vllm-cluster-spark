@@ -333,7 +333,8 @@ function renderSetup() {
 let M = null, pick = null;
 async function loadModels() {
   M = await (await fetch("api/models")).json();
-  pick = M.settings.id || M.current.id || null;
+  pick = M.settings.id || M.current.id
+    || M.catalog.find(m => (S?.cluster?.models || []).includes(m.served_model_name))?.id || null;
   drawModels();
 }
 function drawModels(headOnly) {
@@ -350,11 +351,14 @@ function drawModels(headOnly) {
   const card = (id, title, meta, notes, badge) => `<label class="mcard ${pick === id ? "sel" : ""}">
       <input type="radio" name="m" value="${esc(id)}" ${pick === id ? "checked" : ""}>
       <b>${esc(title)} ${badge}</b><div class="meta">${meta}</div>${notes ? `<div class="notes">${esc(notes)}</div>` : ""}</label>`;
-  $("#models").innerHTML = M.catalog.map(m => card(m.id, m.name,
+  const group = (title, list) => list.length ? `<div class="muted" style="grid-column:1/-1;margin-top:4px">${title}</div>` + list.map(m => card(m.id, m.name,
       `${m.size_gb} GB · ${m.min_nodes > 1 ? `needs ${m.min_nodes} nodes` : "fits on one node"} · <code>${esc(m.model)}</code>`,
       m.notes, `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`
         + (cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : "")))
-    .join("") + card("custom", "Other model from Hugging Face", "Any repo vLLM supports, NVFP4 recommended", "You set the arguments. Nothing is checked in advance.", "");
+    .join("") : "";
+  $("#models").innerHTML = group("Needs a cluster — what this app is for", M.catalog.filter(m => m.min_nodes > 1))
+    + group("Fits on one Spark — also runs here, across all nodes", M.catalog.filter(m => m.min_nodes <= 1))
+    + `<div class="muted" style="grid-column:1/-1;margin-top:4px">Anything else</div>` + card("custom", "Other model from Hugging Face", "Any repo vLLM supports, NVFP4 recommended", "You set the arguments. Nothing is checked in advance.", "");
   const e = pick === "custom" ? (M.settings.custom || {}) : M.catalog.find(m => m.id === pick) || {};
   const same = pick === M.settings.id;
   $("#mGpu").value = (same && M.settings.gpu_mem_util) || e.gpu_mem_util || "";

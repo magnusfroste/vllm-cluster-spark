@@ -1,5 +1,5 @@
 {
-  "order": 4,
+  "order": 5,
   "id": "qwen3.6-35b-a3b",
   "name": "Qwen3.6-35B-A3B (Unsloth NVFP4)",
   "model": "unsloth/Qwen3.6-35B-A3B-NVFP4",
