@@ -1,0 +1,8 @@
+{
+  "description": "Fixes the fp8 qkv sharding in mimo_v2.py for tensor parallelism with more than one KV head per rank. See README.md in this folder.",
+  "models": ["XiaomiMiMo/MiMo-V2.6-Flash-RL"],
+  "image_digest": "sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563",
+  "mounts": {
+    "mimo_v2.py": "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/mimo_v2.py"
+  }
+}
