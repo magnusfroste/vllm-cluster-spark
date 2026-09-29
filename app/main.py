@@ -1095,7 +1095,9 @@ async def api_delete_model(request: Request):
     failed = []
     for n, (rc, r, err) in res:
         good = rc == 0 and r and r.get("rc") == 0
-        event(f"{n['role']} {n['host']}: deleted {repo}" if good
+        gone = "not on disk" in str((r or {}).get("out"))
+        event(f"{n['role']} {n['host']}: {repo} was not on disk" if good and gone
+              else f"{n['role']} {n['host']}: deleted {repo}" if good
               else f"{n['role']} {n['host']}: could not delete {repo} ({redact(str((r or {}).get('out') or err))[-200:]})",
               "info" if good else "error")
         failed += [] if good else [n["host"]]
