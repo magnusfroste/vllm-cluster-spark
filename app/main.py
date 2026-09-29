@@ -51,14 +51,17 @@ HF_OFFLINE = envbool("HF_OFFLINE", True)  # vLLM never downloads; the app's down
 ADMIN_USER = env("ADMIN_USER", "admin")
 ADMIN_PASSWORD = env("ADMIN_PASSWORD")
 PORT = int(env("PORT", "8080"))
-AUTO_RECOVER = envbool("AUTO_RECOVER")
-HANG_TIMEOUT_MIN = float(env("HANG_TIMEOUT_MIN", "40"))
-STALL_TIMEOUT_MIN = float(env("STALL_TIMEOUT_MIN", "5"))  # startup with no new log line
-UNHEALTHY_GRACE_MIN = float(env("UNHEALTHY_GRACE_MIN", "3"))  # was ready, stopped answering
-MEM_WARN_GIB = float(env("MEM_WARN_GIB", "4"))
-MAX_AUTO_RESTARTS = int(env("MAX_AUTO_RESTARTS", "1"))
-ALLOW_REBOOT = envbool("ALLOW_REBOOT")
-AUTO_REBOOT = envbool("AUTO_REBOOT")
+# Operational settings, changed in the app. An env value wins and shows as locked.
+OPS = {  # key: (env, type, default, min, max)
+    "auto_recover": ("AUTO_RECOVER", bool, False),
+    "allow_reboot": ("ALLOW_REBOOT", bool, False),
+    "auto_reboot": ("AUTO_REBOOT", bool, False),
+    "stall_timeout_min": ("STALL_TIMEOUT_MIN", float, 5, 1, 60),  # startup with no new log line
+    "hang_timeout_min": ("HANG_TIMEOUT_MIN", float, 40, 10, 240),  # startup not ready after
+    "unhealthy_grace_min": ("UNHEALTHY_GRACE_MIN", float, 3, 1, 60),  # was ready, stopped answering
+    "max_auto_restarts": ("MAX_AUTO_RESTARTS", int, 1, 0, 5),
+    "mem_warn_gib": ("MEM_WARN_GIB", float, 4, 0, 64),
+}
 POLL_SECONDS = float(env("POLL_SECONDS", "15"))
 
 DATA = env("DATA_DIR", "/data")
@@ -110,6 +113,36 @@ def load_settings():
         return json.load(open(SETTINGS_FILE))
     except (OSError, ValueError):
         return {}
+
+
+def save_settings(update):
+    """Merge into settings.json; a None value removes the key."""
+    st = load_settings()
+    st.update(update)
+    st = {k: v for k, v in st.items() if v is not None}
+    tmp = SETTINGS_FILE + ".tmp"
+    json.dump(st, open(tmp, "w"), indent=2)
+    os.replace(tmp, SETTINGS_FILE)
+    return st
+
+
+def conv(t, v):
+    return (str(v).lower() in ("1", "true", "yes", "on")) if t is bool else t(v)
+
+
+def ops():
+    """Operational settings in effect: env > app > default."""
+    saved = load_settings().get("ops", {})
+    o = {"locked": []}
+    for k, (e, t, d, *_) in OPS.items():
+        if env(e):
+            o[k] = conv(t, env(e))
+            o["locked"].append(k)
+        elif k in saved:
+            o[k] = conv(t, saved[k])
+        else:
+            o[k] = d
+    return o
 
 
 def cfg():
@@ -353,17 +386,18 @@ def poll_once():
     else:
         state = "starting"
 
+    o = ops()
     global UNHEALTHY_SINCE
     UNHEALTHY_SINCE = None if state != "not responding" else (UNHEALTHY_SINCE or now())
     hung = None
     if state == "starting" and uptime is not None:
-        if uptime > HANG_TIMEOUT_MIN * 60:
+        if uptime > o["hang_timeout_min"] * 60:
             hung = f"startup has run for {dur(uptime)} without responding"
         elif errs and uptime > 180:
             hung = f"startup shows {len(errs)} error line(s)"
-        elif stall and stall > STALL_TIMEOUT_MIN * 60 and uptime > STALL_TIMEOUT_MIN * 60:
+        elif stall and stall > o["stall_timeout_min"] * 60 and uptime > o["stall_timeout_min"] * 60:
             hung = f"no new log line for {dur(stall)} (phase: {phase or 'unknown'})"
-    elif state == "not responding" and now() - UNHEALTHY_SINCE > UNHEALTHY_GRACE_MIN * 60:
+    elif state == "not responding" and now() - UNHEALTHY_SINCE > o["unhealthy_grace_min"] * 60:
         hung = f"was ready, has not answered /health for {dur(now() - UNHEALTHY_SINCE)}"
 
     STATUS.update({
@@ -385,7 +419,7 @@ def poll_once():
             "hung_reason": hung,
             "roce_bad": roce_bad,
             "mem_low": [n["host"] for n in nodes
-                        if (n.get("mem") or {}).get("available", 1 << 62) < MEM_WARN_GIB * 2**30],
+                        if (n.get("mem") or {}).get("available", 1 << 62) < o["mem_warn_gib"] * 2**30],
             "image_mismatch": len(image_ids) > 1,
             "workers_down": [n["host"] for n in nodes[1:]
                              if not (n.get("container") or {}).get("running")],
@@ -440,6 +474,7 @@ def setup_summary(nodes, running=()):
         per.append({"role": n["role"], "host": n["host"], "reachable": n.get("reachable"),
                     "agent": n.get("agent"), "agent_old": n.get("reachable") and n.get("agent") != AGENT_VERSION,
                     "checks": checks, "model": m or None,
+                    "lan_ips": n.get("lan_ips") or [], "models": n.get("models") or [],
                     "downloading": bool(dl.get("running")),
                     "download_failed": bool(dl) and not dl.get("running") and dl.get("exit_code") != 0})
     applied = load_state().get("applied")
@@ -468,9 +503,10 @@ def auto_recover():
             s["attempts"] = 0
             save_state(s)
         return
-    if not AUTO_RECOVER or not c.get("hung") or CURRENT_ACTION["name"]:
+    o = ops()
+    if not o["auto_recover"] or not c.get("hung") or CURRENT_ACTION["name"]:
         return
-    if now() - s["last_action"] < max(STALL_TIMEOUT_MIN, 5) * 60:
+    if now() - s["last_action"] < max(o["stall_timeout_min"], 5) * 60:
         return
     if c.get("roce_bad"):
         if s.get("gave_up", 0) <= s["last_action"]:
@@ -479,10 +515,10 @@ def auto_recover():
             s["gave_up"] = now()
             save_state(s)
         return
-    if s["attempts"] < MAX_AUTO_RESTARTS:
+    if s["attempts"] < o["max_auto_restarts"]:
         event(f"hang detected: {c.get('hung_reason')} — restarting the cluster automatically", "warn")
         start_action("restart", auto=True)
-    elif ALLOW_REBOOT and AUTO_REBOOT and now() - s["last_reboot"] > 6 * 3600:
+    elif o["allow_reboot"] and o["auto_reboot"] and now() - s["last_reboot"] > 6 * 3600:
         event("restart did not help — rebooting the nodes automatically", "warn")
         start_action("reboot", auto=True)
     elif s.get("gave_up", 0) <= s["last_action"]:
@@ -579,8 +615,8 @@ def do_restart():
 
 
 def do_reboot():
-    if not ALLOW_REBOOT:
-        raise RuntimeError("ALLOW_REBOOT is off")
+    if not ops()["allow_reboot"]:
+        raise RuntimeError("the reboot button is off under Settings")
     s = load_state()
     s["last_reboot"] = now()
     save_state(s)
@@ -856,11 +892,10 @@ def api_status():
                 "head": HEAD_HOST, "workers": WORKER_HOSTS, "ssh_user": SSH_USER,
                 "cluster_dir": CLUSTER_DIR, "mode": CONFIG_MODE,
                 "served_model_name": cfg()["served_model_name"], "port": VLLM_PORT,
-                "auto_recover": AUTO_RECOVER, "hang_timeout_min": HANG_TIMEOUT_MIN,
-                "max_auto_restarts": MAX_AUTO_RESTARTS, "allow_reboot": ALLOW_REBOOT,
-                "stall_timeout_min": STALL_TIMEOUT_MIN, "unhealthy_grace_min": UNHEALTHY_GRACE_MIN,
+                **{k: v for k, v in ops().items() if k != "locked"}, "ops_locked": ops()["locked"],
+                "public_url": load_settings().get("public_url", ""),
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
-                "auto_reboot": AUTO_REBOOT, "state": load_state(),
+                "state": load_state(),
                 "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE},
             "pubkey": pubkey()}
 
@@ -869,8 +904,8 @@ def api_status():
 def api_action(name: str):
     if name not in ACTIONS:
         raise HTTPException(404, "unknown action")
-    if name == "reboot" and not ALLOW_REBOOT:
-        raise HTTPException(403, "ALLOW_REBOOT is off")
+    if name == "reboot" and not ops()["allow_reboot"]:
+        raise HTTPException(403, "the reboot button is off under Settings")
     start_action(name)
     return {"started": name}
 
@@ -913,13 +948,71 @@ async def api_model(request: Request):
             st["max_model_len"] = str(n)
     except (ValueError, AssertionError):
         raise HTTPException(400, "GPU memory must be 0.30–0.95 and context 1024–1048576 tokens")
-    tmp = SETTINGS_FILE + ".tmp"
-    json.dump(st, open(tmp, "w"), indent=2)
-    os.replace(tmp, SETTINGS_FILE)
+    save_settings({"custom": None, "gpu_mem_util": None, "max_model_len": None, **st})
     c = cfg()
     event(f"model set to {c['model']}" + (f" (env overrides: {', '.join(c['locked'])})" if c["locked"] else "")
           + " — download it, then Restart to apply")
     return {"ok": True, "current": c}
+
+
+@app.get("/api/apikey", dependencies=[Depends(auth)])
+def api_apikey():
+    return {"key": API_KEY}
+
+
+@app.post("/api/settings", dependencies=[Depends(auth)])
+async def api_settings(request: Request):
+    """Operational settings and the public URL. They apply at once, no restart."""
+    b = await request.json()
+    upd = {}
+    if "public_url" in b:
+        u = str(b["public_url"] or "").strip().rstrip("/")
+        if u and not re.match(r"^https?://[A-Za-z0-9.:/_-]+$", u):
+            raise HTTPException(400, "the public URL must start with http:// or https://")
+        upd["public_url"] = u or None
+    if "ops" in b:
+        saved = dict(load_settings().get("ops", {}))
+        for k, v in (b["ops"] or {}).items():
+            if k not in OPS:
+                raise HTTPException(400, f"unknown setting {k}")
+            e, t, d, *lim = OPS[k]
+            try:
+                v = conv(t, v)
+                assert not lim or lim[0] <= v <= lim[1]
+            except (ValueError, AssertionError):
+                raise HTTPException(400, f"{k} must be between {lim[0]} and {lim[1]}")
+            saved[k] = v
+        upd["ops"] = saved
+    save_settings(upd)
+    event("settings changed: " + ", ".join(
+        [f"{k}={v}" for k, v in (b.get("ops") or {}).items()] + (["public URL"] if "public_url" in b else [])))
+    return {"ok": True, "ops": ops()}
+
+
+@app.post("/api/delete-model", dependencies=[Depends(auth)])
+async def api_delete_model(request: Request):
+    repo = (await request.json()).get("repo", "")
+    if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo):
+        raise HTTPException(400, "invalid repo")
+    c = cfg()
+    if repo == c["model"]:
+        raise HTTPException(400, "that is the chosen model — pick another one first")
+    if CURRENT_ACTION["name"]:
+        raise HTTPException(409, f"{CURRENT_ACTION['name']} is running")
+    image = c["image"] or next((m["image"] for m in CATALOG.values()), "")
+    cmd = f"delete-model {shlex.quote(image)} {shlex.quote(HF_CACHE_DIR)} {repo}"
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        res = list(ex.map(lambda n: (n, ssh(n["host"], cmd, timeout=900)), NODES))
+    failed = []
+    for n, (rc, r, err) in res:
+        good = rc == 0 and r and r.get("rc") == 0
+        event(f"{n['role']} {n['host']}: deleted {repo}" if good
+              else f"{n['role']} {n['host']}: could not delete {repo} ({redact(str((r or {}).get('out') or err))[-200:]})",
+              "info" if good else "error")
+        failed += [] if good else [n["host"]]
+    if failed:
+        raise HTTPException(502, f"could not delete on {', '.join(failed)} — see Events")
+    return {"ok": True}
 
 
 @app.post("/api/test", dependencies=[Depends(auth)])
@@ -992,5 +1085,5 @@ def startup():
         event("HEAD_HOST is not set — nothing to monitor", "error")
         return
     event(f"vllmapp started: head {HEAD_HOST}, workers {WORKER_HOSTS or '–'}, "
-          f"mode {CONFIG_MODE}, auto-recover {'on' if AUTO_RECOVER else 'off'}")
+          f"mode {CONFIG_MODE}, auto-recover {'on' if ops()['auto_recover'] else 'off'}")
     threading.Thread(target=poller, daemon=True).start()

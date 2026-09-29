@@ -76,6 +76,20 @@ details summary { cursor: pointer; color: var(--accent); }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; margin-left: 4px; }
 .badge.verified { color: var(--ok); } .badge.untested { color: var(--warn); } .badge.run { color: var(--accent); }
 .field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.next { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--code);
+        display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.next b { font-size: 15px; }
+.next .step { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+table.t { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+table.t th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 8px 4px 0; }
+table.t td { padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.uselist { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; align-items: center; }
+.uselist code { font-size: 13px; }
+button.small { padding: 3px 9px; font-size: 12px; }
+.opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+.opt input[type=checkbox] { margin-top: 3px; }
+.opt small { display: block; color: var(--muted); }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -85,9 +99,14 @@ details summary { cursor: pointer; color: var(--accent); }
   <header>
     <h1>vLLM cluster</h1>
     <span class="muted" id="sub"></span>
-    <nav id="lognav"></nav>
+    <nav>
+      <a class="btn tab" data-tab="overview" href="#overview">Overview</a>
+      <a class="btn tab" data-tab="details" href="#details">Details</a>
+      <span id="lognav" style="display:contents"></span>
+    </nav>
   </header>
 
+  <div id="tab-overview">
   <section class="card">
     <div class="hero">
       <div class="dot" id="dot"></div>
@@ -96,8 +115,14 @@ details summary { cursor: pointer; color: var(--accent); }
         <div class="muted" id="phase"></div>
       </div>
     </div>
+    <div id="next" class="next"></div>
     <div class="kv" id="kv"></div>
     <div id="alerts"></div>
+  </section>
+
+  <section class="card" id="useCard">
+    <h2>Use the model</h2>
+    <div id="use" class="muted">Loading…</div>
   </section>
 
   <section class="card" id="modelCard">
@@ -126,9 +151,14 @@ details summary { cursor: pointer; color: var(--accent); }
   <section class="card" id="setupCard">
     <h2>Setup</h2>
     <div id="setup" class="muted">Loading…</div>
+    <details style="margin-top:10px"><summary>Install the agent on a node</summary>
+      <p class="muted">Run this on each node, head included, as the user the app logs in as. It adds the
+        app's key with <code>restrict</code> and a forced command, so the key can only run the agent.
+        Run it again when the Setup card says an agent is outdated.</p>
+      <pre id="install">Loading…</pre></details>
   </section>
 
-  <section class="card">
+  <section class="card" id="controlCard">
     <h2>Control</h2>
     <div class="btns">
       <button class="primary" data-a="start">Start</button>
@@ -143,13 +173,27 @@ details summary { cursor: pointer; color: var(--accent); }
   <section class="card">
     <h2>Test the model</h2>
     <div class="row">
-      <input type="text" id="prompt" value="What is 17*23? Answer with the number only.">
+      <input type="text" id="prompt" value="What is the capital of Sweden, and what is 17*23? Answer briefly.">
       <button id="testBtn">Send</button>
     </div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Ask something with an answer you can check. A broken model
+      setup can give fluent text that is wrong.</div>
     <div id="testOut"></div>
   </section>
+  </div>
 
+  <div id="tab-details" style="display:none">
   <section class="nodes" id="nodes"></section>
+
+  <section class="card">
+    <h2>Models on disk</h2>
+    <div id="disk" class="muted">Loading…</div>
+  </section>
+
+  <section class="card">
+    <h2>Settings</h2>
+    <div id="ops" class="muted">Loading…</div>
+  </section>
 
   <section class="card">
     <h2>Events</h2>
@@ -161,11 +205,8 @@ details summary { cursor: pointer; color: var(--accent); }
     <div id="cfg" class="muted"></div>
     <details style="margin-top:10px"><summary>Preview config against the nodes</summary>
       <div id="preview" class="muted" style="margin-top:8px">Loading…</div></details>
-    <details style="margin-top:10px"><summary>Install the agent on a new node</summary>
-      <p class="muted">Run on each node as the user the app logs in as. It adds the app's
-        key with <code>restrict</code> and a forced command, so the key can only run the agent.</p>
-      <pre id="install">Loading…</pre></details>
   </section>
+  </div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
@@ -176,6 +217,14 @@ const dur = s => { if (s == null) return "–"; s = Math.round(s);
   return h ? `${h} h ${m} min` : m ? `${m} min` : `${s} s`; };
 const hhmm = iso => new Date(iso).toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
 let S = null;
+
+function showTab() {
+  const t = location.hash === "#details" ? "details" : "overview";
+  $("#tab-overview").style.display = t === "overview" ? "" : "none";
+  $("#tab-details").style.display = t === "details" ? "" : "none";
+  document.querySelectorAll(".tab").forEach(a => a.classList.toggle("active", a.dataset.tab === t));
+}
+window.addEventListener("hashchange", showTab); showTab();
 
 async function refresh() {
   try {
@@ -216,8 +265,8 @@ function render() {
 
   const busy = S.action?.name;
   document.querySelectorAll("[data-a]").forEach(b => b.disabled = !!busy);
-  $("#rebootBtn").disabled = busy || !cfg.allow_reboot;
-  $("#rebootBtn").title = cfg.allow_reboot ? "" : "ALLOW_REBOOT is off";
+  $("#rebootBtn").disabled = busy;
+  $("#rebootBtn").style.display = cfg.allow_reboot ? "" : "none";
   $("#actionInfo").textContent = busy ? `Running: ${busy} (since ${hhmm(new Date(S.action.started*1000))})` : "";
 
   $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
@@ -249,7 +298,11 @@ function render() {
   $("#events").innerHTML = (S.events || []).slice(0, 40).map(e =>
     `<span class="t">${hhmm(e.ts)}</span><span class="${e.kind}">${esc(e.msg)}</span>`).join("")
     || `<span></span><span class="muted">No events yet.</span>`;
-  renderSetup();
+  const todo = renderSetup();
+  renderNext(todo);
+  renderUse();
+  renderDisk();
+  if (!opsDrawn) renderOps();
   if (M) drawModels(true);  // header only: running model and pending restart
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
@@ -275,7 +328,7 @@ const gb = b => b == null ? "?" : (b / 1e9).toFixed(1) + " GB";
 let setupOpen = false;
 function renderSetup() {
   const st = S.setup, cfg = S.config;
-  if (!st) return;
+  if (!st) return 0;
   let h = "", todo = 0;
   if (st.missing_env.length) { todo++;
     h += `<div class="errbox">Set in Easypanel's env, then deploy: <b>${esc(st.missing_env.join(", "))}</b></div>`; }
@@ -285,15 +338,15 @@ function renderSetup() {
     h += `<div class="errbox">PATCHES=${esc(st.patchset)} does not exist. Available: ${esc(cfg.patchsets.join(", ") || "none")}</div>`; }
   for (const n of st.nodes) {
     let rows = "";
-    const row = (ok, label, fix, opt) => {
-      if (!ok && !opt) todo++;
+    const row = (ok, label, fix, opt, nocount) => {
+      if (!ok && !opt && !nocount) todo++;
       rows += `<span class="${ok ? "y" : opt ? "o" : "n"}">${ok ? "✓" : opt ? "–" : "✗"}</span><span>${label}${!ok && fix ? `<pre>${esc(fix)}</pre>` : ""}</span>`;
     };
     if (!n.reachable) {
-      row(false, "App can log in with its SSH key", "Run the install command under Configuration → Install the agent on this node");
+      row(false, "App can log in with its SSH key", "Run the command under “Install the agent on a node” below, on this node");
     } else if (n.agent_old) {
       row(false, `Agent is version ${esc(n.agent)}, the app needs ${esc(st.agent_version)}`,
-          "Run the install command under Configuration → Install the agent on this node again");
+          "Run the command under “Install the agent on a node” below, on this node, again");
     } else {
       for (const [k, c] of Object.entries(n.checks || {})) {
         const [label, fix] = FIX[k] || [k, null];
@@ -310,7 +363,7 @@ function renderSetup() {
               <div class="bar"><i style="width:${pct || 0}%"></i></div><div class="lastlog">${esc(m.download?.last || "")}</div>`
           : n.download_failed ? `Download failed (exit ${m.download.exit_code}): <span class="muted">${esc(m.download.last)}</span>`
           : `Model not downloaded${m.bytes ? ` <span class="muted">(${gb(m.bytes)} so far)</span>` : ""}`;
-        row(m.present, label, null);
+        row(m.present, label, null, false, true);  // the download is its own step
       }
     }
     h += `<div class="setnode"><h3>${esc(n.role)} · ${esc(n.host)}</h3><div class="checks">${rows}</div></div>`;
@@ -323,11 +376,159 @@ function renderSetup() {
       <span class="muted"><code>${esc(st.model)}</code>${st.revision ? ` @ ${esc(st.revision.slice(0, 10))}` : ""}${st.size ? ` · ${gb(st.size)}` : ""}
       · on every node in parallel${st.patchset ? ` · patch set <b>${esc(st.patchset)}</b>` : ""}</span></div>`;
   $("#setup").innerHTML = (todo ? `<p style="margin:0 0 6px">${todo} thing(s) left before the cluster can start. Commands with <code>sudo</code> run on the node itself; everything else the app does.</p>`
-    : `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`) + h;
+    : st.model_ready || !st.model ? `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`
+    : `<p style="margin:0 0 6px">The nodes are ready. ${st.nodes.some(n => n.downloading) ? "The model is downloading." : "Next: download the model."}</p>`) + h;
   $("#setupCard").querySelector("h2").textContent = todo ? `Setup · ${todo} left` : "Setup";
   $("#setupDet")?.addEventListener("toggle", e => setupOpen = e.target.open);
   $("#dlBtn")?.addEventListener("click", () => act("download"));
   $("#dlStop")?.addEventListener("click", () => act("download-stop"));
+  return todo;
+}
+
+// ---------- next step ----------
+function renderNext(todo) {
+  const c = S.cluster || {}, st = S.setup || {}, busy = S.action?.name;
+  const cur = (M && M.current) || {}, name = cur.entry?.name || st.model || "the model";
+  let step, text, btn = "";
+  const dl = (st.nodes || []).filter(n => n.downloading);
+  if (busy) { step = "Working"; text = `${busy} is running…`; }
+  else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in Easypanel's env and deploy.`; }
+  else if (st.no_model) { step = "Step 1 of 4"; text = "Pick a model."; btn = `<button class="primary" onclick="go('#modelCard')">Choose model</button>`; }
+  else if (todo) { step = "Step 2 of 4"; text = `Fix ${todo} thing(s) on the nodes.`; btn = `<button class="primary" onclick="go('#setupCard')">Show what</button>`; }
+  else if (!st.model_ready && dl.length) {
+    const b = Math.min(...dl.map(n => n.model?.bytes || 0)), pct = st.size ? Math.floor(100 * b / st.size) : null;
+    step = "Step 3 of 4"; text = `Downloading ${name}${pct != null ? `: ${pct} %` : "…"}. It continues if you close the page.`; }
+  else if (!st.model_ready) { step = "Step 3 of 4"; text = `Download ${name} to every node.`;
+    btn = `<button class="primary" onclick="act('download')">Download model</button>`; }
+  else if (c.hung) { step = "Problem"; text = `The cluster is hung (${c.hung_reason}).${S.config.auto_recover ? " Auto-recover will restart it." : ""}`;
+    btn = `<button onclick="act('restart')">Restart</button> <a href="logs/0">head log →</a>`; }
+  else if (c.state === "starting") { step = "Step 4 of 4"; text = `Starting ${name}: ${c.phase || "…"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""}. This takes 10–20 minutes.`; }
+  else if (c.healthy && st.pending) { step = "Ready to switch"; text = `${name} is downloaded. Restart to switch to it; the API is down for 10–20 minutes.`;
+    btn = `<button class="primary" onclick="act('restart')">Restart</button>`; }
+  else if (c.healthy) { step = "Done"; text = "The model is running. Connect your app with the details under Use the model.";
+    btn = `<button onclick="go('#useCard')">Show how</button>`; }
+  else if (c.state === "head unreachable") { step = "Problem"; text = "The app can't reach the head node over SSH. Check that it is on and the agent is installed."; }
+  else if (c.state === "not responding") { step = "Problem"; text = "vLLM stopped answering."; btn = `<button onclick="act('restart')">Restart</button>`; }
+  else { step = "Step 4 of 4"; text = `Start the cluster with ${name}.`; btn = `<button class="primary" onclick="act('start')">Start</button>`; }
+  $("#next").innerHTML = `<div style="flex:1;min-width:220px"><div class="step">${esc(step)}</div><b>${esc(text)}</b></div>${btn}`;
+}
+function go(sel) { location.hash = "#overview"; document.querySelector(sel).scrollIntoView({behavior: "smooth"}); }
+
+// ---------- use the model ----------
+let apiKey = null, showKey = false;
+async function getKey() { if (apiKey == null) apiKey = (await (await fetch("api/apikey")).json()).key; return apiKey; }
+function useUrls() {
+  const head = (S.setup?.nodes || [])[0] || {}, port = S.config.port;
+  const urls = (head.lan_ips || []).map(ip => ["On your network", `http://${ip}:${port}/v1`]);
+  if (S.config.public_url) urls.unshift(["From anywhere", S.config.public_url.replace(/\/v1$/, "") + "/v1"]);
+  return urls;
+}
+function snippets(url, model, key) {
+  return {
+    curl: `curl ${url}/chat/completions \\\n  -H "Authorization: Bearer ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello!"}]}'`,
+    Python: `from openai import OpenAI\n\nclient = OpenAI(base_url="${url}", api_key="${key}")\nr = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(r.choices[0].message.content)`,
+    OpenCode: JSON.stringify({"$schema": "https://opencode.ai/config.json", provider: {spark: {npm: "@ai-sdk/openai-compatible",
+      name: "DGX Spark", options: {baseURL: url, apiKey: key}, models: {[model]: {name: model}}}}}, null, 2),
+  };
+}
+let snipTab = "curl";
+function renderUse() {
+  const c = S.cluster || {}, model = (c.models || [])[0] || S.config.served_model_name || "model";
+  const urls = useUrls(), url = urls[0]?.[1] || `http://<head-ip>:${S.config.port}/v1`;
+  const key = showKey && apiKey ? apiKey : "YOUR_API_KEY";
+  const sn = snippets(url, model, key);
+  $("#use").innerHTML = (c.healthy ? "" : `<p style="margin:0 0 8px">Works once the model responds. The details stay the same.</p>`) +
+    `<div class="uselist">
+      ${urls.map(([k, u]) => `<span>${esc(k)}</span><span><code>${esc(u)}</code> <button class="small" data-copy="${esc(u)}">Copy</button></span>`).join("")}
+      <span>Model name</span><span><code>${esc(model)}</code> <button class="small" data-copy="${esc(model)}">Copy</button></span>
+      <span>API key</span><span><code>${showKey && apiKey ? esc(apiKey) : "••••••••••••"}</code>
+        <button class="small" id="keyShow">${showKey ? "Hide" : "Show"}</button> <button class="small" id="keyCopy">Copy</button></span>
+    </div>
+    <p class="muted" style="font-size:12px">It speaks the OpenAI API, so most tools work: set the base URL, the model name and the key.
+      ${S.config.public_url ? "" : `For access from outside your network, set a public URL under <a href="#details">Details → Settings</a>.`}</p>
+    <div class="row">${Object.keys(sn).map(k => `<button class="small ${k === snipTab ? "primary" : ""}" data-snip="${k}">${k}</button>`).join("")}
+      <button class="small" id="snipCopy" style="margin-left:auto">Copy with key</button></div>
+    <pre>${esc(sn[snipTab])}</pre>`;
+  $("#use").querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copy(b.dataset.copy, b));
+  $("#use").querySelectorAll("[data-snip]").forEach(b => b.onclick = () => { snipTab = b.dataset.snip; renderUse(); });
+  $("#keyShow").onclick = async () => { await getKey(); showKey = !showKey; renderUse(); };
+  $("#keyCopy").onclick = async e => copy(await getKey(), e.target);
+  $("#snipCopy").onclick = async e => copy(snippets(url, model, await getKey())[snipTab], e.target);
+}
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); } catch {
+    const t = document.createElement("textarea"); t.value = text; document.body.append(t); t.select(); document.execCommand("copy"); t.remove(); }
+  if (btn) { const o = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = o, 1200); }
+}
+
+// ---------- models on disk ----------
+function renderDisk() {
+  const nodes = (S.setup?.nodes || []).filter(n => n.reachable);
+  const repos = [...new Set(nodes.flatMap(n => n.models.map(m => m.repo)))];
+  const chosen = S.setup?.model, running = (S.cluster?.models || []);
+  const cat = M ? Object.fromEntries(M.catalog.map(m => [m.model, m])) : {};
+  if (!repos.length) { $("#disk").textContent = "No models on disk yet."; return; }
+  $("#disk").innerHTML = `<table class="t"><tr><th>Model</th>${nodes.map(n => `<th>${esc(n.role)}</th>`).join("")}<th></th></tr>` +
+    repos.map(r => {
+      const e = cat[r], isRun = e && running.includes(e.served_model_name), isChosen = r === chosen;
+      const gguf = /gguf/i.test(r);
+      return `<tr><td><b>${esc(e?.name || r)}</b>${e ? `<div class="muted"><code>${esc(r)}</code></div>` : ""}
+          ${isChosen ? `<span class="badge verified">Chosen</span>` : ""}${isRun ? `<span class="badge run">Running</span>` : ""}
+          ${gguf ? `<span class="badge untested">GGUF, not for vLLM</span>` : ""}</td>` +
+        nodes.map(n => { const m = n.models.find(x => x.repo === r);
+          return `<td>${m ? gb(m.bytes) + (m.partial ? ` <span class="muted">(partial)</span>` : "") : "–"}</td>`; }).join("") +
+        `<td style="text-align:right">${isChosen || isRun ? "" : `<button class="small danger" data-del="${esc(r)}">Delete</button>`}</td></tr>`;
+    }).join("") + `</table>` +
+    `<p class="muted" style="font-size:12px">Free space: ${nodes.map(n => `${esc(n.role)} ${gb(n.checks?.disk_free?.bytes)}`).join(" · ")}.
+      Deleting removes the files from every node. The chosen and the running model can't be deleted.</p>`;
+  $("#disk").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    const r = b.dataset.del;
+    if (!confirm(`Delete ${r} from every node? Downloading it again takes hours.`)) return;
+    b.disabled = true; b.textContent = "Deleting…";
+    const res = await fetch("api/delete-model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({repo: r})});
+    if (!res.ok) alert((await res.json()).detail || res.status);
+    refresh();
+  });
+}
+
+// ---------- settings ----------
+let opsDrawn = false;
+const OPS = [
+  ["auto_recover", "Restart a hung cluster automatically", "When startup stalls or a running cluster stops answering, the app restarts it."],
+  ["allow_reboot", "Show the reboot button", "Needs the passwordless reboot line from Setup on every node."],
+  ["auto_reboot", "Reboot the nodes if a restart didn't help", "Last automatic step, at most once every 6 hours."],
+];
+const OPSNUM = [
+  ["stall_timeout_min", "Startup counts as hung after this many minutes without a new log line"],
+  ["hang_timeout_min", "… or when it hasn't answered after this many minutes"],
+  ["unhealthy_grace_min", "A running cluster counts as hung after failing health checks this many minutes"],
+  ["max_auto_restarts", "Automatic restarts before giving up"],
+  ["mem_warn_gib", "Warn when a node has less free memory than this (GiB)"],
+];
+function renderOps() {
+  const cfg = S.config, lock = cfg.ops_locked || [];
+  const lk = k => lock.includes(k) ? `<small>Set in Easypanel's env; remove it there to change it here.</small>` : "";
+  $("#ops").innerHTML = OPS.map(([k, t, d]) => `<label class="opt"><input type="checkbox" data-op="${k}" ${cfg[k] ? "checked" : ""} ${lock.includes(k) ? "disabled" : ""}>
+      <span><b>${t}</b><small>${d}</small>${lk(k)}</span></label>`).join("") +
+    `<details style="margin-top:6px"><summary>Timing</summary>` +
+    OPSNUM.map(([k, t]) => `<div class="opt"><input type="text" size="5" data-opn="${k}" value="${cfg[k]}" ${lock.includes(k) ? "disabled" : ""}><span>${t}${lk(k)}</span></div>`).join("") +
+    `</details>
+    <div class="opt" style="margin-top:12px"><span style="flex:1"><b>Public URL</b><small>If you expose the API through a
+      Cloudflare tunnel or a domain, e.g. <code>https://llm.example.com</code>. Shown under Use the model.</small>
+      <input type="text" id="pubUrl" value="${esc(cfg.public_url || "")}" style="width:100%;margin-top:4px" placeholder="https://…"></span></div>
+    <div class="row"><button class="primary" id="opsSave">Save settings</button><span class="muted" id="opsInfo"></span></div>`;
+  opsDrawn = true;
+  $("#opsSave").onclick = async () => {
+    const o = {};
+    document.querySelectorAll("[data-op]:not(:disabled)").forEach(i => o[i.dataset.op] = i.checked);
+    document.querySelectorAll("[data-opn]:not(:disabled)").forEach(i => o[i.dataset.opn] = i.value.trim());
+    const r = await fetch("api/settings", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ops: o, public_url: $("#pubUrl").value.trim()})});
+    const d = await r.json();
+    if (!r.ok) return alert(d.detail || r.status);
+    $("#opsInfo").textContent = "Saved. Applies right away.";
+    await refresh(); opsDrawn = false; renderOps();
+  };
 }
 
 let M = null, pick = null;

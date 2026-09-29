@@ -89,14 +89,20 @@ shows the bytes on disk per node. xet and `hf_transfer` are turned off, since bo
 large downloads on DGX Spark. The download continues if you close the page, and a stopped
 download resumes where it left off.
 
-## 5. Start
+## 5. Start and use it
 
 Press **Start**. The app checks that the model is downloaded and that RoCE is up on every node,
 writes the config, starts the workers and then the head. Startup for a large model takes
 10–20 minutes, and the status card follows the phases. When it says **Responding**, use
 **Test the model** with a prompt whose answer you can check.
 
-The API is OpenAI-compatible at `http://<HEAD_HOST>:8000/v1`, with `API_KEY` as the bearer token.
+The line at the top of the page always says what to do next. When the model runs, **Use the
+model** shows the API addresses (on your network, and from anywhere once you set a public URL
+under Settings), the model name, the key, and ready-to-paste examples for curl, Python and
+OpenCode. The API is OpenAI-compatible, so most tools work with those three values.
+
+**Details** has the node status, the models on disk (with Delete, to free space), the settings,
+the event log and a preview of the config the app writes.
 
 ## Changing the model or the config
 
@@ -127,14 +133,12 @@ nodes have now.
 | `IF_NAMES` / `IB_HCAS` | detected | `;`-separated per node, if detection gets it wrong |
 | `CLUSTER_DIR` | `~/vllm-cluster` | on the nodes, set in the agent's config at install |
 | `CONFIG_MODE` | `managed` | `existing` never writes to the nodes (for a hand-written setup) |
-| `AUTO_RECOVER` | `false` | restart a hung cluster automatically |
-| `STALL_TIMEOUT_MIN` | `5` | startup counts as hung after this long without a new log line |
-| `HANG_TIMEOUT_MIN` | `40` | … or when it hasn't answered after this long |
-| `UNHEALTHY_GRACE_MIN` | `3` | a cluster that was ready counts as hung after failing `/health` this long |
-| `MAX_AUTO_RESTARTS` | `1` | automatic restarts before giving up |
-| `ALLOW_REBOOT` / `AUTO_REBOOT` | `false` / `false` | the reboot button, and rebooting as the last automatic step (at most once per 6 h) |
-| `MEM_WARN_GIB` | `4` | warn when a node has less free memory than this |
 | `VLLM_PORT`, `POLL_SECONDS` | `8000`, `15` | |
+
+Auto-recover, the reboot button, the timeouts and the public URL are set in the app under
+**Details → Settings** and apply at once. They can also be set in the env (`AUTO_RECOVER`,
+`ALLOW_REBOOT`, `AUTO_REBOOT`, `STALL_TIMEOUT_MIN`, `HANG_TIMEOUT_MIN`, `UNHEALTHY_GRACE_MIN`,
+`MAX_AUTO_RESTARTS`, `MEM_WARN_GIB`), and then the env wins and the page shows them as locked.
 
 The model settings are normally chosen in the app. Setting any of these in the env overrides
 the app's choice, and the page shows them as locked: `MODEL`, `SERVED_MODEL_NAME`,

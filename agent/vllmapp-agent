@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "3"
+VERSION = "4"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -279,10 +279,13 @@ def dl_container():
     rc, so, _ = run(["docker", "inspect", DL_NAME])
     if rc != 0:
         return None
-    d = json.loads(so)[0]["State"]
+    info = json.loads(so)[0]
+    d = info["State"]
+    args = info.get("Args") or []
     _, lo, le = run(["docker", "logs", "--tail", "3", DL_NAME])
     last = [l for l in (lo + le).replace("\r", "\n").splitlines() if l.strip()]
     return {"running": d["Running"], "exit_code": d["ExitCode"],
+            "repo": args[1] if len(args) > 1 and args[0] == "download" else None,
             "started_at": d["StartedAt"], "finished_at": d["FinishedAt"],
             "last": last[-1][:300] if last else ""}
 
@@ -331,8 +334,63 @@ def setup(c, host_ip, head_ip, cache, repo, rev=""):
     st = os.statvfs(p)
     checks["disk_free"] = {"ok": True, "bytes": st.f_bavail * st.f_frsize}
     checks["reboot_sudo"] = {"ok": can_reboot(), "optional": True}
-    return {"checks": checks,
+    rdma = set()  # the cluster link ports: RoCE interfaces are not for clients
+    for dev in os.listdir("/sys/class/infiniband") if os.path.isdir("/sys/class/infiniband") else []:
+        try:
+            rdma.update(os.listdir(f"/sys/class/infiniband/{dev}/device/net"))
+        except OSError:
+            pass
+    lan = [f[3].split("/")[0] for f in (l.split() for l in so.splitlines())
+           if len(f) > 3 and f[1] != iface and f[1] not in rdma
+           and not re.match(r"^(lo|docker|br-|veth|virbr|tailscale)", f[1])]
+    return {"checks": checks, "lan_ips": lan, "models": models_on_disk(cache),
             "model": model_state(cache, repo, rev) if repo != "-" else None}
+
+
+def models_on_disk(cache):
+    hub = os.path.join(cache, "hub")
+    res = []
+    for d in sorted(os.listdir(hub)) if os.path.isdir(hub) else []:
+        if not d.startswith("models--"):
+            continue
+        size, partial = 0, 0
+        try:
+            for e in os.scandir(os.path.join(hub, d, "blobs")):
+                size += e.stat().st_size
+                partial += e.name.endswith(".incomplete")
+        except OSError:
+            pass
+        res.append({"repo": d[len("models--"):].replace("--", "/", 1), "bytes": size, "partial": partial})
+    return res
+
+
+def configured_model(c):
+    try:
+        for line in open(os.path.join(c["CLUSTER_DIR"], ".env")):
+            if line.startswith("MODEL="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+def delete_model(c, image, cache, repo):
+    """Remove a model from the HF cache. The files belong to root (the containers write them),
+    so the removal runs in a container. The model the cluster is configured for is refused."""
+    if not (SAFE_IMAGE.match(image) and SAFE_PATH.match(cache) and SAFE_REPO.match(repo)):
+        return out({"rc": 1, "out": "invalid arguments"})
+    if repo == configured_model(c):
+        return out({"rc": 1, "out": f"{repo} is the model the cluster is configured for"})
+    dl = dl_container()
+    if dl and dl["running"] and dl["repo"] in (repo, None):
+        return out({"rc": 1, "out": f"{repo} is downloading — stop the download first"})
+    cache = hf_cache(cache)
+    name = "models--" + repo.replace("/", "--")
+    if not os.path.isdir(os.path.join(cache, "hub", name)):
+        return out({"rc": 0, "out": "not on disk"})
+    rc, so, se = run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "rm",
+                      "-v", f"{cache}/hub:/hub", image, "-rf", f"/hub/{name}"], timeout=600)
+    out({"rc": rc, "out": (so + se)[-500:]})
 
 
 def download(image, repo, cache, rev=""):
@@ -397,6 +455,8 @@ def main():
         putfile(c, args[0])
     elif cmd == "download" and len(args) >= 3:
         download(*args[:4])
+    elif cmd == "delete-model" and len(args) == 3:
+        delete_model(c, *args)
     elif cmd == "download-stop":
         download_stop()
     elif cmd == "version":
