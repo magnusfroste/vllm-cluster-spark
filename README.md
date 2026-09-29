@@ -101,6 +101,11 @@ model** shows the API addresses (on your network, and from anywhere once you set
 under Settings), the model name, the key, and ready-to-paste examples for curl, Python and
 OpenCode. The API is OpenAI-compatible, so most tools work with those three values.
 
+**Usage** shows input and output tokens, requests and energy per day and per week, and tokens
+per kWh. The app reads vLLM's token counters and each node's GPU power every poll and keeps
+them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
+disks; set **Other power per node** under Settings, from a wall meter, to count the whole box.
+
 **Details** has the node status, the models on disk (with Delete, to free space), the settings,
 the event log and a preview of the config the app writes.
 
@@ -138,7 +143,7 @@ nodes have now.
 Auto-recover, the reboot button, the timeouts and the public URL are set in the app under
 **Details → Settings** and apply at once. They can also be set in the env (`AUTO_RECOVER`,
 `ALLOW_REBOOT`, `AUTO_REBOOT`, `STALL_TIMEOUT_MIN`, `HANG_TIMEOUT_MIN`, `UNHEALTHY_GRACE_MIN`,
-`MAX_AUTO_RESTARTS`, `MEM_WARN_GIB`), and then the env wins and the page shows them as locked.
+`MAX_AUTO_RESTARTS`, `MEM_WARN_GIB`, `EXTRA_WATTS`), and then the env wins and the page shows them as locked.
 
 The model settings are normally chosen in the app. Setting any of these in the env overrides
 the app's choice, and the page shows them as locked: `MODEL`, `SERVED_MODEL_NAME`,

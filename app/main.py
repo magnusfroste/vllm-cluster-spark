@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import shlex
+import sqlite3
 import subprocess
 import threading
 import time
@@ -61,6 +62,7 @@ OPS = {  # key: (env, type, default, min, max)
     "unhealthy_grace_min": ("UNHEALTHY_GRACE_MIN", float, 3, 1, 60),  # was ready, stopped answering
     "max_auto_restarts": ("MAX_AUTO_RESTARTS", int, 1, 0, 5),
     "mem_warn_gib": ("MEM_WARN_GIB", float, 4, 0, 64),
+    "extra_watts": ("EXTRA_WATTS", float, 0, 0, 1000),  # per node, on top of the GPU's own reading
 }
 POLL_SECONDS = float(env("POLL_SECONDS", "15"))
 
@@ -68,6 +70,7 @@ DATA = env("DATA_DIR", "/data")
 KEY = os.path.join(DATA, "id_ed25519")
 STATE_FILE = os.path.join(DATA, "state.json")
 SETTINGS_FILE = os.path.join(DATA, "settings.json")  # the model chosen in the app
+STATS_DB = os.path.join(DATA, "stats.db")  # token and energy use per hour
 EVENTS_FILE = os.path.join(DATA, "events.log")
 
 NODES = ([{"role": "head", "host": HEAD_HOST}] if HEAD_HOST else []) + \
@@ -427,6 +430,10 @@ def poll_once():
         "setup": setup_summary(nodes, models),
         "action": dict(CURRENT_ACTION),
     })
+    try:
+        record_usage(nodes, models)
+    except Exception as e:  # noqa: BLE001 — statistics must never stop the polling
+        event(f"usage statistics: {e}", "warn")
     return STATUS
 
 
@@ -492,6 +499,75 @@ def setup_summary(nodes, running=()):
 def applied_key(c):
     """What decides the rendered config, to tell whether a restart is needed to apply it."""
     return {k: c[k] for k in (*MODEL_KEYS, "patchset")}
+
+
+# ---------- usage statistics ----------
+_stats = {"counters": None, "ts": None}
+_stats_lock = threading.Lock()
+
+
+def stats_db():
+    db = sqlite3.connect(STATS_DB, timeout=10)
+    db.execute("""CREATE TABLE IF NOT EXISTS hourly (
+        hour INTEGER, model TEXT, prompt INTEGER DEFAULT 0, cached INTEGER DEFAULT 0,
+        gen INTEGER DEFAULT 0, requests INTEGER DEFAULT 0, gpu_wh REAL DEFAULT 0,
+        extra_wh REAL DEFAULT 0, PRIMARY KEY (hour, model))""")
+    return db
+
+
+def vllm_counters():
+    """Token and request counters from vLLM's /metrics, summed per model."""
+    code, body = http_get(f"http://{HEAD_HOST}:{VLLM_PORT}/metrics",
+                          {"Authorization": f"Bearer {API_KEY}"})
+    if code != 200:
+        return None
+    want = {"vllm:prompt_tokens_total": "prompt", "vllm:prompt_tokens_cached_total": "cached",
+            "vllm:generation_tokens_total": "gen", "vllm:request_success_total": "requests"}
+    res = {}
+    for line in body.splitlines():
+        m = re.match(r'^([a-z_:]+)\{([^}]*)\} ([0-9.e+]+)$', line)
+        if not m or m.group(1) not in want:
+            continue
+        model = (re.search(r'model_name="([^"]*)"', m.group(2)) or [None, ""])[1]
+        c = res.setdefault(model, {"prompt": 0, "cached": 0, "gen": 0, "requests": 0})
+        c[want[m.group(1)]] += float(m.group(3))
+    return res
+
+
+def record_usage(nodes, running):
+    """Add this poll's tokens (counter deltas) and energy (power × time) to the hour's row."""
+    t = now()
+    counters = vllm_counters() if running else None
+    watts = sum((n.get("gpu") or {}).get("power") or 0 for n in nodes)
+    extra = ops()["extra_watts"] * sum(1 for n in nodes if n.get("reachable"))
+    with _stats_lock:
+        last, last_ts = _stats["counters"], _stats["ts"]
+        _stats.update(counters=counters, ts=t)
+        if last_ts is None:
+            return  # first sample after start: only a baseline
+        dt = min(t - last_ts, 5 * POLL_SECONDS)  # a gap (app down) is not counted as energy
+        rows = {}
+        for model, c in (counters or {}).items():
+            prev = (last or {}).get(model)
+            # a counter that went down means vLLM restarted: everything since then is new
+            rows[model] = {k: v - prev[k] if prev and v >= prev[k] else (v if prev else 0)
+                           for k, v in c.items()}
+        model = running[0] if running else ""
+        r = rows.setdefault(model, {"prompt": 0, "cached": 0, "gen": 0, "requests": 0})
+        r["gpu_wh"] = watts * dt / 3600
+        r["extra_wh"] = extra * dt / 3600
+        hour = int(t // 3600 * 3600)
+        db = stats_db()
+        with db:
+            for m, r in rows.items():
+                db.execute("""INSERT INTO hourly (hour, model, prompt, cached, gen, requests, gpu_wh, extra_wh)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (hour, model) DO UPDATE SET
+                    prompt = prompt + excluded.prompt, cached = cached + excluded.cached,
+                    gen = gen + excluded.gen, requests = requests + excluded.requests,
+                    gpu_wh = gpu_wh + excluded.gpu_wh, extra_wh = extra_wh + excluded.extra_wh""",
+                           (hour, m, int(r["prompt"]), int(r["cached"]), int(r["gen"]),
+                            int(r["requests"]), r.get("gpu_wh", 0), r.get("extra_wh", 0)))
+        db.close()
 
 
 def auto_recover():
@@ -953,6 +1029,19 @@ async def api_model(request: Request):
     event(f"model set to {c['model']}" + (f" (env overrides: {', '.join(c['locked'])})" if c["locked"] else "")
           + " — download it, then Restart to apply")
     return {"ok": True, "current": c}
+
+
+@app.get("/api/usage", dependencies=[Depends(auth)])
+def api_usage(days: int = 90):
+    """Hourly rows; the page groups them into days and weeks in the viewer's time zone."""
+    since = int(now() - max(1, min(days, 400)) * 86400)
+    db = stats_db()
+    rows = db.execute("""SELECT hour, model, prompt, cached, gen, requests, gpu_wh, extra_wh
+        FROM hourly WHERE hour >= ? ORDER BY hour""", (since,)).fetchall()
+    db.close()
+    keys = ("hour", "model", "prompt", "cached", "gen", "requests", "gpu_wh", "extra_wh")
+    return {"rows": [dict(zip(keys, r)) for r in rows], "extra_watts": ops()["extra_watts"],
+            "nodes": len(NODES)}
 
 
 @app.get("/api/apikey", dependencies=[Depends(auth)])

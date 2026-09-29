@@ -8,10 +8,12 @@
 :root {
   --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
   --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --accent: #0969da; --code: #f0f2f5;
+  --series-1: #2a78d6; --grid: #e3e6ea;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
-          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14; }
+          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14;
+          --series-1: #3987e5; --grid: #2a313a; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
@@ -90,6 +92,19 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
 .opt input[type=checkbox] { margin-top: 3px; }
 .opt small { display: block; color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 10px 0 4px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.tile b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+.tile span { font-size: 20px; font-weight: 600; }
+.tile small { display: block; color: var(--muted); font-size: 11px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 10px; }
+.chart h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.chart svg { display: block; width: 100%; }
+.chart svg text { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart .hit:hover + .col, .chart .col.hover { opacity: .75; }
+#tip { position: fixed; pointer-events: none; background: var(--card); color: var(--fg); border: 1px solid var(--line);
+       border-radius: 7px; padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: none; z-index: 10; }
+.seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -123,6 +138,16 @@ button.small { padding: 3px 9px; font-size: 12px; }
   <section class="card" id="useCard">
     <h2>Use the model</h2>
     <div id="use" class="muted">Loading…</div>
+  </section>
+
+  <section class="card" id="usageCard">
+    <h2>Usage</h2>
+    <div class="row seg">
+      <button class="small on" data-by="day">Days</button>
+      <button class="small" data-by="week">Weeks</button>
+      <span class="muted" id="usageRange" style="font-size:12px"></span>
+    </div>
+    <div id="usage" class="muted">Loading…</div>
   </section>
 
   <section class="card" id="modelCard">
@@ -208,6 +233,7 @@ button.small { padding: 3px 9px; font-size: 12px; }
   </section>
   </div>
 </main>
+<div id="tip"></div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -504,6 +530,7 @@ const OPSNUM = [
   ["unhealthy_grace_min", "A running cluster counts as hung after failing health checks this many minutes"],
   ["max_auto_restarts", "Automatic restarts before giving up"],
   ["mem_warn_gib", "Warn when a node has less free memory than this (GiB)"],
+  ["extra_watts", "Other power per node (W), added to the GPU's own reading in Usage. The GPU reading leaves out CPU, memory, network and disks; measure at the wall to set it"],
 ];
 function renderOps() {
   const cfg = S.config, lock = cfg.ops_locked || [];
@@ -530,6 +557,103 @@ function renderOps() {
     await refresh(); opsDrawn = false; renderOps();
   };
 }
+
+// ---------- usage ----------
+let U = null, usageBy = "day";
+const nf = n => Math.round(n).toLocaleString("en-US");
+const short = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(Math.round(n));
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function bucketStart(ts, by) {  // local midnight, or the Monday of the week
+  const d = new Date(ts * 1000); d.setHours(0, 0, 0, 0);
+  if (by === "week") d.setDate(d.getDate() - (d.getDay() + 6) % 7);
+  return d;
+}
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  return Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7);
+}
+async function loadUsage() {
+  try { U = await (await fetch("api/usage?days=90")).json(); drawUsage(); } catch (e) { $("#usage").textContent = "Could not load usage: " + e.message; }
+}
+function usageBuckets() {
+  const n = usageBy === "day" ? 14 : 12, list = [], map = {};
+  const end = bucketStart(Date.now() / 1000, usageBy);
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(end); d.setDate(d.getDate() - i * (usageBy === "day" ? 1 : 7));
+    const b = {key: ymd(d), d, prompt: 0, cached: 0, gen: 0, requests: 0, wh: 0,
+      label: usageBy === "day" ? `${d.getDate()}/${d.getMonth() + 1}` : "W" + isoWeek(d),
+      long: usageBy === "day" ? d.toLocaleDateString("en-GB", {weekday: "short", day: "numeric", month: "short"})
+        : `Week ${isoWeek(d)} (from ${d.toLocaleDateString("en-GB", {day: "numeric", month: "short"})})`};
+    list.push(b); map[b.key] = b;
+  }
+  for (const r of U.rows) {
+    const b = map[ymd(bucketStart(r.hour, usageBy))];
+    if (!b) continue;
+    b.prompt += r.prompt; b.cached += r.cached; b.gen += r.gen; b.requests += r.requests; b.wh += r.gpu_wh + r.extra_wh;
+  }
+  return list;
+}
+function colChart(title, list, val, fmt) {
+  const W = Math.max(260, ($("#usage").clientWidth - 28) / (innerWidth < 700 ? 1 : 3)), H = 130, L = 36, B = 18, T = 8;
+  const max = Math.max(...list.map(val), 0), top = max ? niceMax(max) : 1;
+  const bw = (W - L) / list.length, cw = Math.min(24, bw - 2);
+  const y = v => T + (H - T - B) * (1 - v / top);
+  let g = [0, 0.5, 1].map(f => `<line x1="${L}" x2="${W}" y1="${y(top * f)}" y2="${y(top * f)}" stroke="var(--grid)" stroke-width="1"/>
+    <text x="${L - 4}" y="${y(top * f) + 3}" text-anchor="end">${short(top * f)}</text>`).join("");
+  list.forEach((b, i) => {
+    const v = val(b), x = L + i * bw + (bw - cw) / 2, h = y(0) - y(v), r = Math.min(4, h);
+    if (v > 0) g += `<path class="col" d="M${x},${y(0)} v${-(h - r)} q0,${-r} ${r},${-r} h${cw - 2 * r} q${r},0 ${r},${r} v${h - r} z" fill="var(--series-1)"/>`;
+    if ((list.length - 1 - i) % Math.ceil(list.length / 7) === 0)  // evenly spaced, counted from today
+      g += i === list.length - 1  // the last label ends at the chart's edge instead of being clipped
+        ? `<text x="${W}" y="${H - 4}" text-anchor="end">${esc(b.label)}</text>`
+        : `<text x="${L + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle">${esc(b.label)}</text>`;
+    g += `<rect class="hit" x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent" data-i="${i}"/>`;
+  });
+  return `<div class="chart"><h4>${esc(title)}</h4><svg viewBox="0 0 ${W} ${H}" height="${H}" data-title="${esc(title)}">${g}</svg></div>`;
+}
+function niceMax(v) { const p = 10 ** Math.floor(Math.log10(v)), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
+function drawUsage() {
+  if (!U) return;
+  const list = usageBuckets();
+  const sum = k => list.reduce((a, b) => a + b[k], 0);
+  const tin = sum("prompt"), tout = sum("gen"), kwh = sum("wh") / 1000, req = sum("requests"), cached = sum("cached");
+  const per = (n, e) => e > 0 ? short(n / e) : "–";
+  $("#usageRange").textContent = usageBy === "day" ? "last 14 days" : "last 12 weeks";
+  const empty = !U.rows.length;
+  $("#usage").innerHTML = (empty ? `<p style="margin:8px 0 0">Nothing recorded yet. The app counts tokens and energy from now on.</p>` : "") +
+    `<div class="tiles">
+      <div class="tile"><b>Input tokens</b><span>${short(tin)}</span><small>${tin ? Math.round(100 * cached / tin) : 0} % from the prefix cache</small></div>
+      <div class="tile"><b>Output tokens</b><span>${short(tout)}</span><small>${nf(req)} requests</small></div>
+      <div class="tile"><b>Energy</b><span>${kwh.toFixed(kwh < 10 ? 2 : 1)} kWh</span><small>${U.extra_watts ? `GPU + ${U.extra_watts} W per node` : "GPU only"}</small></div>
+      <div class="tile"><b>Tokens per kWh</b><span>${per(tin + tout, kwh)}</span><small>output only: ${per(tout, kwh)}</small></div>
+    </div>
+    <div class="charts">
+      ${colChart("Input tokens", list, b => b.prompt)}
+      ${colChart("Output tokens", list, b => b.gen)}
+      ${colChart("Energy (kWh)", list, b => b.wh / 1000)}
+    </div>
+    <details style="margin-top:8px"><summary>Show as table</summary>
+      <table class="t"><tr><th>${usageBy === "day" ? "Day" : "Week"}</th><th>Input</th><th>Cached</th><th>Output</th><th>Requests</th><th>kWh</th><th>Tokens/kWh</th></tr>
+      ${list.slice().reverse().map(b => `<tr><td>${esc(b.long)}</td><td>${nf(b.prompt)}</td><td>${nf(b.cached)}</td><td>${nf(b.gen)}</td>
+        <td>${nf(b.requests)}</td><td>${(b.wh / 1000).toFixed(2)}</td><td>${b.wh ? nf((b.prompt + b.gen) / (b.wh / 1000)) : "–"}</td></tr>`).join("")}</table></details>
+    <p class="muted" style="font-size:12px">Energy is the GPU power from <code>nvidia-smi</code> on every node, all the time (idle included),
+      ${U.extra_watts ? `plus ${U.extra_watts} W per node for the rest of the box` : "which leaves out CPU, memory, network and disks. Add the rest under Details → Settings to get the whole box"}.
+      Counting starts when this version of the app is deployed.</p>`;
+  document.querySelectorAll("#usage svg").forEach(svg => {
+    const title = svg.dataset.title;
+    svg.querySelectorAll(".hit").forEach(h => {
+      h.onmousemove = e => { const b = list[+h.dataset.i], t = $("#tip");
+        t.innerHTML = `<b>${esc(b.long)}</b><br>Input ${nf(b.prompt)} · Output ${nf(b.gen)}<br>${(b.wh / 1000).toFixed(2)} kWh · ${nf(b.requests)} requests`;
+        t.style.display = "block"; t.style.left = Math.min(e.clientX + 12, innerWidth - 240) + "px"; t.style.top = e.clientY + 12 + "px"; };
+      h.onmouseleave = () => $("#tip").style.display = "none";
+    });
+  });
+}
+document.querySelectorAll("[data-by]").forEach(b => b.onclick = () => {
+  usageBy = b.dataset.by; document.querySelectorAll("[data-by]").forEach(x => x.classList.toggle("on", x === b)); drawUsage(); });
+addEventListener("resize", () => drawUsage());
+loadUsage(); setInterval(loadUsage, 60000);
 
 let M = null, pick = null;
 async function loadModels() {
