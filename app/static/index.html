@@ -118,6 +118,7 @@ button.small { padding: 3px 9px; font-size: 12px; }
       <a class="btn tab" data-tab="overview" href="#overview">Overview</a>
       <a class="btn tab" data-tab="details" href="#details">Details</a>
       <span id="lognav" style="display:contents"></span>
+      <a class="btn" href="logout" title="Log out">Log out</a>
     </nav>
   </header>
 
@@ -255,6 +256,7 @@ window.addEventListener("hashchange", showTab); showTab();
 async function refresh() {
   try {
     const r = await fetch("api/status");
+    if (r.status === 401) { location.href = "login?next=" + encodeURIComponent(location.pathname); return; }
     if (!r.ok) throw new Error(r.status + " " + (await r.text()));
     S = await r.json(); render();
   } catch (e) { $("#state").textContent = "App not responding"; $("#phase").textContent = e.message; }

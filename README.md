@@ -51,7 +51,7 @@ Create a project and an **App** service (not Compose) in the head node's Easypan
   Easypanel, or point a Cloudflare tunnel that runs inside Easypanel at
   `http://<project>_<service>:80`. The host's own `cloudflared` can't resolve Docker service names.
 
-Deploy and open the page. Log in as `admin` with `ADMIN_PASSWORD`.
+Deploy and open the page. Log in as `admin` with `ADMIN_PASSWORD`. The login lasts 30 days and survives redeploys; changing `ADMIN_PASSWORD` logs everyone out. Scripts can use Basic auth against `/api/…`.
 
 ## 2. Install the agent on every node
 

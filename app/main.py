@@ -5,6 +5,8 @@ over SSH with a dedicated key that may only run vllmapp-agent (see agent/).
 """
 import base64
 import difflib
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -14,12 +16,13 @@ import sqlite3
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 
 def env(name, default=""):
@@ -929,11 +932,51 @@ def preview():
 
 # ---------- web ----------
 app = FastAPI(title="vllmapp")
+SESSION_COOKIE = "vllmapp_session"
+SESSION_DAYS = 30
+
+
+def session_secret():
+    """Signing key for the login cookie. It lives in /data so a login survives redeploys,
+    and the password is mixed in so changing it logs everyone out."""
+    path = os.path.join(DATA, "session.key")
+    if not os.path.exists(path):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(secrets.token_hex(32))
+    return hashlib.sha256((open(path).read().strip() + ADMIN_USER + ADMIN_PASSWORD).encode()).digest()
+
+
+def make_session(user):
+    exp = str(int(now() + SESSION_DAYS * 86400))
+    msg = f"{user}|{exp}"
+    return msg + "|" + hmac.new(session_secret(), msg.encode(), hashlib.sha256).hexdigest()
+
+
+def session_user(cookie):
+    try:
+        user, exp, sig = (cookie or "").rsplit("|", 2)
+        good = hmac.new(session_secret(), f"{user}|{exp}".encode(), hashlib.sha256).hexdigest()
+        return user if hmac.compare_digest(sig, good) and int(exp) > now() else None
+    except ValueError:
+        return None
+
+
+def check_password(user, password):
+    return secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and \
+        secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
+
+
 def auth(request: Request):
-    """Basic auth with UTF-8 (FastAPI's HTTPBasic decodes ASCII, so non-ASCII passwords always got 401)."""
+    """A login cookie, or Basic auth for scripts (decoded as UTF-8, since FastAPI's HTTPBasic
+    decodes ASCII and non-ASCII passwords always failed). Pages without either go to /login;
+    API calls get a plain 401, so the browser shows no password dialog."""
     if not ADMIN_PASSWORD:
         raise HTTPException(503, "ADMIN_PASSWORD is not set — set it in Easypanel's env")
-    user = password = None
+    user = session_user(request.cookies.get(SESSION_COOKIE))
+    if user:
+        return user
+    password = None
     scheme, _, param = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() == "basic":
         raw = base64.b64decode(param + "===")
@@ -943,12 +986,79 @@ def auth(request: Request):
                 break
             except UnicodeDecodeError:
                 continue
-    ok = user is not None and \
-        secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and \
-        secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
-    if not ok:
-        raise HTTPException(401, "invalid credentials", headers={"WWW-Authenticate": 'Basic realm="vllmapp", charset="UTF-8"'})
-    return user
+    if user is not None and check_password(user, password):
+        return user
+    if request.url.path.startswith("/api/"):
+        raise HTTPException(401, "not logged in")
+    up = "../" * (request.url.path.count("/") - 1)  # relative, so it also works behind a path prefix
+    raise HTTPException(303, headers={"Location": f"{up}login?next=" + urllib.parse.quote(request.url.path)})
+
+
+LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>vLLM cluster</title>
+<style>
+:root { --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea; --accent: #0969da; --err: #cf222e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
+  --line: #2a313a; --accent: #4493f8; --err: #f85149; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+       display: grid; place-items: center; min-height: 100vh; }
+form { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 22px; width: min(320px, calc(100vw - 32px)); }
+h1 { font-size: 18px; margin: 0 0 14px; }
+label { display: block; font-size: 12px; color: var(--muted); margin-top: 10px; }
+input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line);
+        background: var(--bg); color: var(--fg); margin-top: 3px; }
+button { margin-top: 16px; width: 100%; font: inherit; padding: 8px; border-radius: 7px; border: 1px solid var(--accent);
+         background: var(--accent); color: #fff; cursor: pointer; }
+.err { color: var(--err); margin-top: 10px; }
+</style></head><body>
+<form method="post" action="login"><h1>vLLM cluster</h1>
+<label>User<input name="user" value="{user}" autocomplete="username"></label>
+<label>Password<input name="password" type="password" autocomplete="current-password" autofocus></label>
+<input type="hidden" name="next" value="{next}">{error}
+<button>Log in</button></form></body></html>"""
+
+
+def safe_next(n):
+    return n if re.match(r"^/[A-Za-z0-9/_-]*$", n or "") and not n.startswith("//") else "/"
+
+
+def login_page(user="", nxt="/", error=""):
+    esc = lambda v: v.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")
+    return LOGIN_PAGE.replace("{user}", esc(user)).replace("{next}", esc(safe_next(nxt))) \
+        .replace("{error}", f'<div class="err">{esc(error)}</div>' if error else "")
+
+
+@app.get("/login")
+def login_form(next: str = "/"):
+    return HTMLResponse(login_page(ADMIN_USER, next))
+
+
+_login_fails = []
+
+
+@app.post("/login")
+async def login(request: Request):
+    f = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"))
+    user, password = f.get("user", [""])[0], f.get("password", [""])[0]
+    nxt = safe_next(f.get("next", ["/"])[0])
+    _login_fails[:] = [t for t in _login_fails if now() - t < 300]
+    if len(_login_fails) >= 10:  # slow down guessing: at most 10 wrong passwords per 5 minutes
+        return HTMLResponse(login_page(user, nxt, "Too many attempts. Wait a few minutes."), 429)
+    if not ADMIN_PASSWORD or not check_password(user, password):
+        _login_fails.append(now())
+        return HTMLResponse(login_page(user, nxt, "Wrong user or password."), 401)
+    r = RedirectResponse("." + nxt, 303)
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    r.set_cookie(SESSION_COOKIE, make_session(user), max_age=SESSION_DAYS * 86400,
+                 httponly=True, samesite="lax", secure=https)
+    return r
+
+
+@app.get("/logout")
+def logout():
+    r = RedirectResponse("login", 303)
+    r.delete_cookie(SESSION_COOKIE)
+    return r
 
 
 @app.get("/healthz")
