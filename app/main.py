@@ -265,14 +265,45 @@ def pubkey():
     return open(KEY + ".pub").read().strip()
 
 
-def ssh(host, cmd, timeout=60, input=None):
-    """Run an agent command on the node. Returns (rc, parsed json | None, raw text)."""
-    argv = ["ssh", "-i", KEY, "-p", SSH_PORT,
+_masters = {}  # host -> lock: one SSH connection per node, shared by every command
+
+
+def ssh_opts(host):
+    return ["ssh", "-i", KEY, "-p", SSH_PORT,
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", f"UserKnownHostsFile={DATA}/known_hosts",
-            "-o", "ServerAliveInterval=15",
-            f"{SSH_USER}@{host}", cmd]
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            "-o", f"ControlPath=/tmp/vllmapp-ssh-{host}-{SSH_PORT}"]
+
+
+def ensure_master(host):
+    """Start the shared connection in the background if it isn't up. It is started on its own,
+    with stdio on /dev/null: a master forked from a command with captured output would hold the
+    pipe open and make that command wait until the master exits. -N runs no command, so the
+    node's forced command (the agent) only runs for real requests."""
+    lock = _masters.setdefault(host, threading.Lock())
+    with lock:
+        base = ssh_opts(host) + [f"{SSH_USER}@{host}"]
+        if subprocess.run(base[:1] + ["-O", "check"] + base[1:], stdin=subprocess.DEVNULL,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10).returncode == 0:
+            return
+        try:
+            subprocess.run(base[:1] + ["-M", "-N", "-f", "-o", "ControlPersist=600"] + base[1:],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=15)
+        except subprocess.TimeoutExpired:
+            pass  # the command below then connects on its own
+
+
+def ssh(host, cmd, timeout=60, input=None):
+    """Run an agent command on the node. Returns (rc, parsed json | None, raw text)."""
+    try:
+        ensure_master(host)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # ControlMaster=no: use the shared connection if it is up, otherwise connect directly
+    argv = ssh_opts(host) + ["-o", "ControlMaster=no", f"{SSH_USER}@{host}", cmd]
     try:
         p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input)
     except subprocess.TimeoutExpired:
@@ -669,10 +700,27 @@ def model_check():
         raise RuntimeError(f"{c['model']} is not fully downloaded on {', '.join(bad)} — use Download model first")
 
 
+def drop_caches():
+    """Free the page cache on every node before vLLM measures free memory. On DGX Spark the
+    GPU shares system memory, and a warm cache (a big download, say) leaves less for the KV
+    cache. Needs a sudoers line; without it the start goes on as before."""
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        res = list(ex.map(lambda n: (n, ssh(n["host"], "drop-caches", timeout=120)), NODES))
+    for n, (rc, r, err) in res:
+        r = r or {}
+        if r.get("rc") == 0:
+            event(f"{n['role']} {n['host']}: page cache freed ({r.get('freed_gib', '?')} GiB)")
+        elif r.get("no_sudo"):
+            pass  # shown as an optional item under Setup
+        else:
+            event(f"{n['role']} {n['host']}: could not free the page cache ({redact(str(r.get('out') or err))[-150:]})", "warn")
+
+
 def do_start():
     model_check()
     preflight()
     write_config()
+    drop_caches()
     on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
@@ -689,6 +737,7 @@ def do_restart():
     # stop + up rather than compose restart, which would keep the old .env and compose.yaml
     on_nodes(NODES[:1], "stop")
     on_nodes(NODES[1:], "stop")
+    drop_caches()
     on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
@@ -1273,8 +1322,8 @@ touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 sed -i '/ vllmapp$/d' ~/.ssh/authorized_keys
 printf 'command="%s/.local/bin/vllmapp-agent",restrict %s\\n' "$HOME" '{pubkey()}' >> ~/.ssh/authorized_keys
 
-# Optional, for the reboot button (passwordless reboot, nothing else):
-echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" | sudo tee /etc/sudoers.d/vllmapp-reboot >/dev/null && sudo chmod 440 /etc/sudoers.d/vllmapp-reboot
+# Optional: lets the app reboot the node and free the page cache before a start. Only these two commands.
+printf '%s\n' "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" "$USER ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches" | sudo tee /etc/sudoers.d/vllmapp >/dev/null && sudo chmod 440 /etc/sudoers.d/vllmapp && sudo visudo -cf /etc/sudoers.d/vllmapp
 """
     return PlainTextResponse(script)
 

@@ -82,7 +82,7 @@ command to fix it. These are one-time steps on the node itself, since they need 
 | Cluster link IP | a static IP on the QSFP port with `nmcli` |
 | Head reachable over the link | cable, and link IPs in the same subnet |
 | Disk space for the model | free space in the HF cache (`HF_CACHE_DIR`) |
-| Passwordless reboot (optional) | a sudoers line that only allows `systemctl reboot` |
+| Reboot and page cache (optional) | one sudoers file that only allows `systemctl reboot` and writing `/proc/sys/vm/drop_caches`. With it the app can reboot a hung node, and frees the page cache before every start so the KV cache gets all the memory |
 
 Then press **Download model**. It runs `hf download` in a container on every node at once and
 shows the bytes on disk per node. xet and `hf_transfer` are turned off, since both have hung on

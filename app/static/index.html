@@ -337,6 +337,8 @@ function render() {
     reboot button <b>${cfg.allow_reboot ? "on" : "off"}</b> · automatic attempts so far: ${cfg.state.attempts}`;
 }
 
+// one sudoers file covers both optional rules
+const SUDOERS = `printf '%s\\n' "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" "$USER ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches" | sudo tee /etc/sudoers.d/vllmapp\nsudo chmod 440 /etc/sudoers.d/vllmapp`;
 const FIX = {
   docker: ["Docker usable by the SSH user", h => `sudo usermod -aG docker $USER   # then log out and back in`],
   nvidia_toolkit: ["NVIDIA Container Toolkit", h =>
@@ -348,8 +350,8 @@ const FIX = {
   head_reachable: ["Head reachable over the link", h =>
     `# Check the cable, and that the link IPs of all nodes are in the same subnet\nping -c3 ${S.config.head}`],
   disk_free: ["Disk space for the model", null],
-  reboot_sudo: ["Passwordless reboot (optional, for the reboot button)", h =>
-    `echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot" | sudo tee /etc/sudoers.d/vllmapp-reboot\nsudo chmod 440 /etc/sudoers.d/vllmapp-reboot`],
+  reboot_sudo: ["Passwordless reboot (optional, for the reboot button)", h => SUDOERS],
+  drop_caches_sudo: ["Free the page cache before a start (optional, gives the KV cache more room)", h => SUDOERS],
 };
 const gb = b => b == null ? "?" : (b / 1e9).toFixed(1) + " GB";
 
