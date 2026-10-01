@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.6"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.7"  # bump on every release that changes the app; shown in the menu
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -916,7 +916,9 @@ if [ "$ROLE" = "worker" ]; then
   exit 0
 fi
 
-ray start --head --node-ip-address="${HOST_IP}" --port=6379 --dashboard-host=127.0.0.1
+# No Ray dashboard: nothing uses it, and its nine sub-processes cost ~400 MB on the head,
+# which also runs Easypanel and the app and is the node that runs short of memory.
+ray start --head --node-ip-address="${HOST_IP}" --port=6379 --include-dashboard=false
 echo "Waiting for ${NUM_NODES} nodes in the Ray cluster..."
 until [ "$(python3 -c 'import ray; ray.init(address="auto", logging_level="ERROR"); print(sum(n["Alive"] for n in ray.nodes()))' 2>/dev/null)" -ge "${NUM_NODES}" ]; do
   sleep 5
