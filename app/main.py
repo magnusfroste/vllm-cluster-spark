@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.4"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.5"  # bump on every release that changes the app; shown in the menu
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -385,28 +385,6 @@ def analyse(lines):
 
 
 APP_STARTED = time.time()
-_drop = {"ts": 0, "busy": False, "for": None}
-
-
-def drop_caches_while_loading(phase, started_at):
-    """Reading the weights (~94 GB per node for GLM) fills the page cache again right after the
-    pre-start drop, and vLLM measures free memory for the KV cache straight after loading. So
-    keep the cache down on every node while the weights load: at most every 15 s, in the
-    background so polling isn't held up. Weights already read are not read again."""
-    if phase != "loading weights" or _drop["busy"] or now() - _drop["ts"] < 15:
-        return
-    if _drop["for"] != started_at:
-        _drop["for"] = started_at
-        event("freeing the page cache on every node while the weights load")
-    _drop.update(ts=now(), busy=True)
-
-    def run():
-        try:
-            with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
-                list(ex.map(lambda n: ssh(n["host"], "drop-caches", timeout=120), NODES))
-        finally:
-            _drop["busy"] = False
-    threading.Thread(target=run, daemon=True).start()
 _hung_polls = {"n": 0}
 
 
@@ -479,8 +457,6 @@ def poll_once():
     elif state == "not responding" and now() - UNHEALTHY_SINCE > o["unhealthy_grace_min"] * 60:
         hung = f"was ready, has not answered /health for {dur(now() - UNHEALTHY_SINCE)}"
     _hung_polls["n"] = _hung_polls["n"] + 1 if hung else 0
-    if state == "starting":
-        drop_caches_while_loading(phase, hc.get("started_at"))
 
     STATUS.update({
         "updated": now(),
