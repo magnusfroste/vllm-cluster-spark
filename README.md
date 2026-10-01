@@ -4,19 +4,27 @@ Runs a vLLM model across two or more NVIDIA DGX Spark (GB10) nodes with tensor p
 over Ray, and gives you one web page to set it up, start it, watch it and fix it. The app runs
 in [Easypanel](https://easypanel.io) on the head node and controls every node over SSH.
 
-Once the app is deployed, everything happens from its page:
+Once the app is deployed, everything happens from its pages, with a menu on the left:
 
-- **Model:** pick a ready-made model from the catalog, or any model on Hugging Face
-- **Setup:** checks each node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space)
-  and shows the exact command for anything that needs `sudo`
-- **Download:** fetches the model on every node in parallel, with progress
-- **Config:** writes `.env`, `compose.yaml`, `entrypoint.sh` and any model patches to every node.
-  The network interface and RoCE HCAs are detected per node
-- **Control:** start, stop, restart, pull image, reboot, test prompt
-- **Status and logs:** startup phase (loading weights %, KV profiling, autotune, CUDA graphs),
-  KV cache and concurrency, errors, GPU and memory per node, a live log page per node
-- **Auto-recover:** restarts a cluster whose startup hangs or that stops answering, and can
-  reboot the nodes as a last resort
+| | Page | What it does |
+|---|---|---|
+| **Cluster** | **Overview** | Status, the next step to take, KV cache and concurrency; Start, Restart, Stop, Pull image, Reboot |
+| | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
+| | **Logs** | The vLLM container log of each node, live, with a filter |
+| | **Events** | What the app and the cluster did: starts, config writes, downloads, automatic restarts |
+| **Models** | **Models** | A catalog of ready-made models, or any model on Hugging Face; download on every node at once; the models on disk, with Delete |
+| | **API** | The API addresses, model name and key, examples for curl, Python and OpenCode, and a test prompt |
+| | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
+| **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the app writes |
+
+The bottom of the menu shows who is logged in (`ADMIN_USER`), Log out, and the app and agent
+versions. The browser tab's icon shows the cluster's state: green when it answers, yellow
+while it starts, red on a problem.
+
+Behind the pages the app writes `.env`, `compose.yaml`, `entrypoint.sh` and any model patches
+to every node (the network interface and RoCE HCAs are detected per node), and auto-recover
+restarts a cluster whose startup hangs or that stops answering, with a reboot as the last
+resort.
 
 ## What you need
 
@@ -55,14 +63,15 @@ Deploy and open the page. Log in as `admin` with `ADMIN_PASSWORD`. The login las
 
 ## 2. Install the agent on every node
 
-Open **Configuration → Install the agent** on the page and paste the command on each node,
+Open **Nodes → Install the agent on a node** and paste the command on each node,
 head included, as `SSH_USER`. It installs a small agent in `~/.local/bin` and adds the app's
 key to `authorized_keys` with a forced command and `restrict`, so the key can only run the
-agent's allowlisted commands. Run it again whenever the Setup card says an agent is outdated.
+agent's allowlisted commands. Run it again whenever **Nodes** says an agent is outdated. The
+same command also offers the optional sudoers file for reboot and the page cache.
 
 ## 3. Pick a model
 
-The **Model** card lists ready-made models with settings that suit DGX Spark: the vLLM image,
+**Models** lists ready-made models with settings that suit DGX Spark: the vLLM image,
 the tool and reasoning parsers, context length and GPU memory share. **Verified** means we have
 run it on two Sparks and checked the answers. **Untested** means the settings come from the
 model card and have not been run here yet. You can also pick any other Hugging Face repo and
@@ -70,9 +79,9 @@ give the vLLM arguments yourself. GPU memory share and max context are under **A
 
 Press **Use this model**. Nothing happens to a running cluster until you press Restart.
 
-## 4. Work through the Setup card
+## 4. Work through the checks on Nodes
 
-The **Setup** card shows every node with a checklist. Each item that fails comes with the
+**Nodes** shows every node with a checklist, and the menu shows how many items are left. Each item that fails comes with the
 command to fix it. These are one-time steps on the node itself, since they need root:
 
 | Check | Typical fix |
@@ -84,30 +93,27 @@ command to fix it. These are one-time steps on the node itself, since they need 
 | Disk space for the model | free space in the HF cache (`HF_CACHE_DIR`) |
 | Reboot and page cache (optional) | one sudoers file that only allows `systemctl reboot` and writing `/proc/sys/vm/drop_caches`. With it the app can reboot a hung node, and frees the page cache before every start so the KV cache gets all the memory |
 
-Then press **Download model**. It runs `hf download` in a container on every node at once and
+Then press **Download model** (on **Models** or **Nodes**). It runs `hf download` in a container on every node at once and
 shows the bytes on disk per node. xet and `hf_transfer` are turned off, since both have hung on
 large downloads on DGX Spark. The download continues if you close the page, and a stopped
 download resumes where it left off.
 
 ## 5. Start and use it
 
-Press **Start**. The app checks that the model is downloaded and that RoCE is up on every node,
-writes the config, starts the workers and then the head. Startup for a large model takes
-10–20 minutes, and the status card follows the phases. When it says **Responding**, use
-**Test the model** with a prompt whose answer you can check.
+Press **Start** on **Overview**. The app checks that the model is downloaded and that RoCE is up
+on every node, frees the page cache, writes the config, starts the workers and then the head.
+Startup for a large model takes 10–20 minutes, and Overview follows the phases. When it says
+**Responding**, go to **API** and use **Test the model** with a prompt whose answer you can check.
 
-The line at the top of the page always says what to do next. When the model runs, **Use the
-model** shows the API addresses (on your network, and from anywhere once you set a public URL
-under Settings), the model name, the key, and ready-to-paste examples for curl, Python and
-OpenCode. The API is OpenAI-compatible, so most tools work with those three values.
+The line at the top of **Overview** always says what to do next. **API** shows the API addresses
+(on your network, and from anywhere once you set a public URL under **Settings**), the model
+name, the key, and ready-to-paste examples for curl, Python and OpenCode. The API is
+OpenAI-compatible, so most tools work with those three values.
 
 **Usage** shows input and output tokens, requests and energy per day and per week, and tokens
 per kWh. The app reads vLLM's token counters and each node's GPU power every poll and keeps
 them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
-disks; set **Other power per node** under Settings, from a wall meter, to count the whole box.
-
-**Details** has the node status, the models on disk (with Delete, to free space), the settings,
-the event log and a preview of the config the app writes.
+disks; set **Other power per node** under **Settings**, from a wall meter, to count the whole box.
 
 ## Changing the model or the config
 
@@ -116,7 +122,7 @@ Pick another model in the app, download it, and press **Restart**. The page says
 
 Changes to the env in Easypanel need a deploy. **A deploy only restarts the app, never the
 cluster.** Every change takes effect on the next **Start** or **Restart**, which writes the
-config to every node first. **Configuration → Preview config** shows the diff against what the
+config to every node first. **Settings → Preview config** shows the diff against what the
 nodes have now.
 
 ## Env reference
@@ -141,7 +147,7 @@ nodes have now.
 | `VLLM_PORT`, `POLL_SECONDS` | `8000`, `15` | |
 
 Auto-recover, the reboot button, the timeouts and the public URL are set in the app under
-**Details → Settings** and apply at once. They can also be set in the env (`AUTO_RECOVER`,
+**Settings** and apply at once. They can also be set in the env (`AUTO_RECOVER`,
 `ALLOW_REBOOT`, `AUTO_REBOOT`, `STALL_TIMEOUT_MIN`, `HANG_TIMEOUT_MIN`, `UNHEALTHY_GRACE_MIN`,
 `MAX_AUTO_RESTARTS`, `MEM_WARN_GIB`, `EXTRA_WATTS`), and then the env wins and the page shows them as locked.
 
