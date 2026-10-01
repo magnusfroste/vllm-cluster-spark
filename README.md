@@ -28,18 +28,51 @@ resort.
 
 ## What you need
 
-- Two or more DGX Spark nodes (or OEM GB10 units) with the same OS user on each
-- A direct QSFP cable between them (the cluster link). With more than two nodes, a switch
-- Internet on every node (wifi or the LAN port), for the image and the model
-- [Easypanel](https://easypanel.io/docs) installed on the head node
-- A Hugging Face token if the model is gated
+- Two or more DGX Spark nodes (or OEM GB10 units), with the same OS user on each
+- A direct QSFP cable between them: the **cluster link**. With more than two nodes, a switch
+- Internet on **every** node (wifi or the LAN port): each node downloads the image and the model
+  itself, so a worker that only has the cluster link can't download anything
+- A [Hugging Face](https://huggingface.co) account, for the model download
+
+## 0. Prepare the nodes
+
+These steps need root and are done once, on each node. The app can't do them for you, because
+it reaches the nodes **over the cluster link** — until the link has IP addresses, the app can't
+reach a worker at all.
+
+1. **Give the cluster link a static IP on every node.** Pick a private /24 that nothing else on
+   the nodes uses, for example `192.168.100.1` for the head and `192.168.100.2`, `.3`, … for the
+   workers. Plug in the cable, then on each node:
+   ```bash
+   ip -br link        # the QSFP port shows UP once the cable is in, e.g. enp1s0f0np0
+   sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses 192.168.100.1/24
+   sudo nmcli con up cluster
+   ```
+   Use the node's own address in the second command. Check from the head:
+   `ping -c3 192.168.100.2` should answer.
+2. **SSH is on** on every node (it is on DGX OS): `sudo systemctl enable --now ssh`.
+3. **The OS user may use Docker** on every node: `sudo usermod -aG docker $USER`, then log out
+   and in again. `docker ps` should work without `sudo`.
+4. **Every node reaches the internet:** `curl -sI https://huggingface.co | head -1` should say
+   `HTTP/2 200`.
+5. **Easypanel on the head node.** Docker is already installed on DGX OS, and ports 80, 443 and
+   3000 must be free:
+   ```bash
+   curl -sSL https://get.easypanel.io | sudo sh
+   ```
+   Open `http://<head's LAN IP>:3000` and create the admin account. See the
+   [Easypanel docs](https://easypanel.io/docs).
+
+The app checks all of this again under **Nodes** and shows the command for anything missing,
+so a step you miss here shows up there.
 
 ## 1. Deploy the app in Easypanel
 
 Create a project and an **App** service (not Compose) in the head node's Easypanel:
 
 - **Source:** GitHub, this repo, branch `main`, build path `/`. The Dockerfile is in the root.
-- **Environment:** start with the required values. Everything else has a working default.
+- **Environment:** the env only holds what the app can't know by itself: the nodes, passwords
+  and keys. You pick the model later, in the app.
   ```env
   HEAD_HOST=192.168.100.1
   WORKER_HOSTS=192.168.100.2
@@ -48,26 +81,37 @@ Create a project and an **App** service (not Compose) in the head node's Easypan
   API_KEY=choose-a-long-random-key
   HF_TOKEN=hf_...
   ```
-  The env only holds what the app can't know by itself: the nodes, passwords and keys. You pick
-  the model in the app.
-  `HEAD_HOST` and `WORKER_HOSTS` are the IPs the nodes will have **on the cluster link**, not
-  on your LAN. Pick them now: any private /24 works, as long as nothing else on the node uses it.
-- **Mounts:** a bind mount from a host directory, for example `/home/youruser/vllmapp-data`,
-  to `/data`. It holds the app's SSH key and must survive redeploys. Without it the app creates
-  a new key that the nodes don't know.
-- **Domain / port:** Easypanel sets `PORT=80` and the app listens on it. Add a domain in
-  Easypanel, or point a Cloudflare tunnel that runs inside Easypanel at
-  `http://<project>_<service>:80`. The host's own `cloudflared` can't resolve Docker service names.
 
-Deploy and open the page. Log in as `admin` with `ADMIN_PASSWORD`. The login lasts 30 days and survives redeploys; changing `ADMIN_PASSWORD` logs everyone out. Scripts can use Basic auth against `/api/…`.
+  | Env | What to put there |
+  |---|---|
+  | `HEAD_HOST`, `WORKER_HOSTS` | the **cluster link** IPs from step 0, not the LAN addresses. Workers comma-separated |
+  | `SSH_USER` | the normal login user on the nodes (the same on all of them), not root |
+  | `ADMIN_PASSWORD` | the password for this app's page. The user is `admin`, or `ADMIN_USER` if you set it |
+  | `API_KEY` | the key every client must send to the model's API. Make one with `openssl rand -hex 32` and keep it: you give it to your apps, or to a gateway like LiteLLM |
+  | `HF_TOKEN` | a **read** token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). For a gated model, also accept its license on the model's page first |
+
+- **Mounts:** a bind mount from a host directory, for example `/home/youruser/vllmapp-data`,
+  to `/data`. It holds the app's SSH key, settings and statistics, and must survive redeploys.
+  Without it the app creates a new key that the nodes don't know.
+- **Domain / port:** Easypanel sets `PORT=80` and the app listens on it. The simplest start is
+  the default domain Easypanel offers under the service's **Domains** tab. For access from
+  outside, add your own domain, or point a Cloudflare tunnel that runs inside Easypanel at
+  `http://<project>_<service>:80` (the host's own `cloudflared` can't resolve Docker service names).
+
+Deploy and open the page. Log in as `admin` (or your `ADMIN_USER`) with `ADMIN_PASSWORD`. The
+login lasts 30 days and survives redeploys; changing `ADMIN_PASSWORD` logs everyone out. Scripts
+can use Basic auth against `/api/…`.
 
 ## 2. Install the agent on every node
 
-Open **Nodes → Install the agent on a node** and paste the command on each node,
-head included, as `SSH_USER`. It installs a small agent in `~/.local/bin` and adds the app's
+Open **Nodes → Install the agent on a node**, log in to each node yourself (head included) as
+`SSH_USER`, and paste the command there. It installs a small agent in `~/.local/bin` and adds the app's
 key to `authorized_keys` with a forced command and `restrict`, so the key can only run the
 agent's allowlisted commands. Run it again whenever **Nodes** says an agent is outdated. The
 same command also offers the optional sudoers file for reboot and the page cache.
+
+Until a node has the agent, **Nodes** says the app can't reach it, with the SSH error and the
+three usual causes: the link has no IP, the agent isn't installed, or SSH is off.
 
 ## 3. Pick a model
 
@@ -97,6 +141,9 @@ Then press **Download model** (on **Models** or **Nodes**). It runs `hf download
 shows the bytes on disk per node. xet and `hf_transfer` are turned off, since both have hung on
 large downloads on DGX Spark. The download continues if you close the page, and a stopped
 download resumes where it left off.
+
+It takes a while: a ~190 GB model at 30 MB/s is close to two hours, and over wifi it can be
+four. The progress bar under **Nodes** is the bytes on disk, so it shows a stalled download.
 
 ## 5. Start and use it
 

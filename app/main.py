@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.5"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.6"  # bump on every release that changes the app; shown in the menu
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -537,6 +537,7 @@ def setup_summary(nodes, running=()):
                     "agent": n.get("agent"), "agent_old": n.get("reachable") and n.get("agent") != AGENT_VERSION,
                     "checks": checks, "model": m or None,
                     "lan_ips": n.get("lan_ips") or [], "models": n.get("models") or [],
+                    "error": n.get("error") if not n.get("reachable") else None,
                     "downloading": bool(dl.get("running")),
                     "download_failed": bool(dl) and not dl.get("running") and dl.get("exit_code") != 0})
     applied = load_state().get("applied")

@@ -466,7 +466,17 @@ function renderSetup() {
       rows += `<span class="${ok ? "y" : opt ? "o" : "n"}">${ok ? "✓" : opt ? "–" : "✗"}</span><span>${label}${!ok && fix ? `<pre>${esc(fix)}</pre>` : ""}</span>`;
     };
     if (!n.reachable) {
-      row(false, "App can log in with its SSH key", "Run the command under “Install the agent on a node” below, on this node");
+      const why = n.error ? `<div class="muted" style="font-size:12px">SSH said: <code>${esc(n.error.trim().split("\n").pop())}</code></div>` : "";
+      row(false, `The app can't reach this node over SSH${why}`,
+        `# Usually one of three things. Check them in this order, on the node itself:\n\n` +
+        `# 1. The cluster link has no IP yet. The app reaches every node at its link IP (${n.host}).\n` +
+        `ip -br addr | grep ${n.host} || echo "no interface has ${n.host} yet"\n` +
+        `ip -br link   # the QSFP port shows UP when the cable is in\n` +
+        `sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses ${n.host}/24\n` +
+        `sudo nmcli con up cluster\n\n` +
+        `# 2. The agent isn't installed: run the command under "Install the agent on a node" below.\n\n` +
+        `# 3. SSH isn't running:\n` +
+        `sudo systemctl enable --now ssh`);
     } else if (n.agent_old) {
       row(false, `Agent is version ${esc(n.agent)}, the app needs ${esc(st.agent_version)}`,
           "Run the command under “Install the agent on a node” below, on this node, again");
