@@ -9,5 +9,27 @@ tool backed by our own SearXNG.
 3. An MCP server in LiteLLM built from `web-search.openapi.json` in this folder, which calls
    that endpoint with the key. Clients connect to LiteLLM's MCP endpoint with their own key.
 
+Give the key as `static_headers` (`{"Authorization": "Bearer …"}`), not as `auth_type:
+bearer_token`: with `auth_type` LiteLLM 1.102 fails to list the server's tools.
+
+## Connecting a client
+
+The tool shows up as `web_search-web_search`. In VS Code, `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "liteit": {
+      "type": "http",
+      "url": "https://api.liteit.se/mcp/",
+      "headers": { "x-litellm-api-key": "Bearer ${input:litellm-key}" }
+    }
+  },
+  "inputs": [
+    { "id": "litellm-key", "type": "promptString", "description": "LiteLLM key", "password": true }
+  ]
+}
+```
+
 SearXNG must allow `format=json` (`search.formats` in its settings.yml) and use engines that
 don't block the server's IP.

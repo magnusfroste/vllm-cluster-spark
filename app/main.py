@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.1"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.2"  # bump on every release that changes the app; shown in the menu
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
