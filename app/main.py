@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.3"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.4"  # bump on every release that changes the app; shown in the menu
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -1093,6 +1093,7 @@ def auth(request: Request):
 
 LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>vLLM cluster</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <style>
 :root { --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea; --accent: #0969da; --err: #cf222e; }
 @media (prefers-color-scheme: dark) { :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
@@ -1156,6 +1157,12 @@ def logout():
     r = RedirectResponse("login", 303)
     r.delete_cookie(SESSION_COOKIE)
     return r
+
+
+@app.get("/favicon.svg")
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static/favicon.svg"), media_type="image/svg+xml")
 
 
 @app.get("/healthz")
