@@ -33,6 +33,8 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
+APP_VERSION = "1.4.1"  # bump on every release that changes the app; shown in the menu
+
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
 WORKER_HOSTS = [h.strip() for h in env("WORKER_HOSTS").split(",") if h.strip()]
@@ -382,6 +384,14 @@ def analyse(lines):
     return phase, pct, kv_tokens, concurrency, errs
 
 
+APP_STARTED = time.time()
+_hung_polls = {"n": 0}
+
+
+def healthy_since_start(st, hc):
+    return bool(hc.get("started_at")) and st.get("ready_for") == hc["started_at"]
+
+
 def poll_once():
     with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
         nodes = list(ex.map(node_status, NODES))
@@ -418,10 +428,20 @@ def poll_once():
         state = "no container"
     elif not hc.get("running"):
         state = "stopped"
-    elif phase == "ready":
-        state = "not responding"
     else:
-        state = "starting"
+        # A cluster that has answered once since this container started is never "starting"
+        # again, only "not responding" (with its grace period). Remembered in the state file,
+        # so an app restart while the cluster is busy can't mistake hours of uptime for a hang.
+        st = load_state()
+        if healthy_since_start(st, hc) or scan.get("ready_seen") or phase == "ready":
+            state = "not responding"
+        else:
+            state = "starting"
+    if healthy and hc.get("started_at"):
+        st = load_state()
+        if st.get("ready_for") != hc["started_at"]:
+            st["ready_for"] = hc["started_at"]
+            save_state(st)
 
     o = ops()
     global UNHEALTHY_SINCE
@@ -436,6 +456,7 @@ def poll_once():
             hung = f"no new log line for {dur(stall)} (phase: {phase or 'unknown'})"
     elif state == "not responding" and now() - UNHEALTHY_SINCE > o["unhealthy_grace_min"] * 60:
         hung = f"was ready, has not answered /health for {dur(now() - UNHEALTHY_SINCE)}"
+    _hung_polls["n"] = _hung_polls["n"] + 1 if hung else 0
 
     STATUS.update({
         "updated": now(),
@@ -615,6 +636,9 @@ def auto_recover():
         return
     o = ops()
     if not o["auto_recover"] or not c.get("hung") or CURRENT_ACTION["name"]:
+        return
+    # never act on one observation, and not while the app itself is just starting
+    if _hung_polls["n"] < 2 or time.time() - APP_STARTED < 120:
         return
     if now() - s["last_action"] < max(o["stall_timeout_min"], 5) * 60:
         return
@@ -1120,8 +1144,8 @@ def index():
     return FileResponse(os.path.join(os.path.dirname(__file__), "static/index.html"))
 
 
-@app.get("/api/status", dependencies=[Depends(auth)])
-def api_status():
+@app.get("/api/status")
+def api_status(user: str = Depends(auth)):
     return {**STATUS, "action": dict(CURRENT_ACTION), "events": events(60),
             "config": {
                 "head": HEAD_HOST, "workers": WORKER_HOSTS, "ssh_user": SSH_USER,
@@ -1131,7 +1155,8 @@ def api_status():
                 "public_url": load_settings().get("public_url", ""),
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "state": load_state(),
-                "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE},
+                "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE,
+                "version": APP_VERSION, "agent_version": AGENT_VERSION, "user": user},
             "pubkey": pubkey()}
 
 

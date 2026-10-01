@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "5"
+VERSION = "6"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -135,17 +135,18 @@ def scan(c, since):
         cmd += ["--since", since]
     p = subprocess.Popen(cmd + [cid], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, errors="replace")
-    lines, last = [], None
+    lines, last, ready = [], None, False
     for line in p.stdout:
         if "shm_broadcast" in line:
             continue
         last = line.rstrip()[:600]
+        ready = ready or "Application startup complete" in line  # kept however long the log gets
         if SCAN.search(line):
             lines.append(last)
             if len(lines) > 800:
                 lines = lines[-400:]
     p.wait()
-    out({"lines": lines[-400:], "last": last})
+    out({"lines": lines[-400:], "last": last, "ready_seen": ready})
 
 
 def logs(c, n, since=None):

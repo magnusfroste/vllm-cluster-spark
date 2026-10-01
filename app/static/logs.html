@@ -42,7 +42,10 @@ input[type=search] { width: 200px; }
 footer { padding: 5px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
          background: var(--card); display: flex; gap: 14px; flex-wrap: wrap; }
 .err { color: var(--err); }
+/* inside the app's Logs page: the app's menu and node picker take over */
+.embedded header h1, .embedded #tabs { display: none; }
 </style>
+<script>if (window.self !== window.top) document.documentElement.classList.add("embedded");</script>
 </head>
 <body>
 <header>
@@ -52,7 +55,7 @@ footer { padding: 5px 16px; font-size: 12px; color: var(--muted); border-top: 1p
     <input type="search" id="filter" placeholder="Filter…">
     <label><input type="checkbox" id="errOnly"> Errors/warnings only</label>
     <label><input type="checkbox" id="wrap" checked> Wrap</label>
-    <label><input type="checkbox" id="hideReq" checked> Hide health polls</label>
+    <label><input type="checkbox" id="hideReq" checked> Hide the app's polls</label>
     <select id="n" title="Lines to load">
       <option value="500">500 lines</option><option value="2000" selected>2,000 lines</option>
       <option value="5000">5,000 lines</option>
@@ -74,7 +77,7 @@ let lines = [], lastTs = "", follow = true, timer = null, busy = false;
 const kind = t => /Traceback|\bERROR\b|Error:|Exception|Timed out|out of memory|failed/i.test(t) ? "error"
   : /\bWARN(ING)?\b|\bW \d/.test(t) ? "warn"
   : /Application startup complete|Ray runtime started|All nodes up|Alla noder uppe/.test(t) ? "ok" : "";
-const noise = t => /"GET \/(health|v1\/models) HTTP/.test(t) || /shm_broadcast/.test(t);
+const noise = t => /"GET \/(health|metrics|v1\/models) HTTP/.test(t) || /shm_broadcast/.test(t);
 
 function parse(raw) {
   const i = raw.indexOf(" ");
