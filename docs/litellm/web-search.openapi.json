@@ -1,0 +1,58 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Web search",
+    "version": "1.0.0",
+    "description": "LiteLLM's search endpoint for the 'searxng' search tool, described so LiteLLM can expose it as an MCP tool."
+  },
+  "servers": [{"url": "https://api.liteit.se"}],
+  "paths": {
+    "/v1/search/searxng": {
+      "post": {
+        "operationId": "web_search",
+        "summary": "Search the web",
+        "description": "Search the web through our own SearXNG. Returns a list of results with title, url and snippet. Use it for current information, documentation and anything after the model's training data.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": {"type": "string", "description": "What to search for, as you would type it into a search engine."},
+                  "max_results": {"type": "integer", "description": "How many results to return.", "default": 10, "minimum": 1, "maximum": 20}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {"type": "string"},
+                          "url": {"type": "string"},
+                          "snippet": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
