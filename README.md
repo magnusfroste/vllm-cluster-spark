@@ -8,7 +8,7 @@ Once the app is deployed, everything happens from its pages, with a menu on the 
 
 | | Page | What it does |
 |---|---|---|
-| **Cluster** | **Overview** | Status, the next step to take, KV cache and concurrency; Start, Restart, Stop, Pull image, Reboot |
+| **Cluster** | **Overview** | A dashboard: status and the next step to take; load now (requests running and waiting, tokens per second, KV cache in use); the model; one line per node; today's tokens, requests and energy; the latest events. Each tile links to its page. Start, Restart, Stop, Pull image, Reboot |
 | | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
 | | **Logs** | The vLLM container log of each node, live, with a filter |
 | | **Events** | What the app and the cluster did: starts, config writes, downloads, automatic restarts |

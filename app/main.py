@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.9"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.5.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 
@@ -581,15 +581,25 @@ def vllm_counters():
         return None
     want = {"vllm:prompt_tokens_total": "prompt", "vllm:prompt_tokens_cached_total": "cached",
             "vllm:generation_tokens_total": "gen", "vllm:request_success_total": "requests"}
-    res = {}
+    gauges = {"vllm:num_requests_running": "running", "vllm:num_requests_waiting": "waiting",
+              "vllm:kv_cache_usage_perc": "kv"}
+    res, load = {}, {"running": 0, "waiting": 0, "kv": 0.0}
     for line in body.splitlines():
         m = re.match(r'^([a-z_:]+)\{([^}]*)\} ([0-9.e+]+)$', line)
-        if not m or m.group(1) not in want:
+        if not m:
+            continue
+        if m.group(1) in gauges:
+            load[gauges[m.group(1)]] += float(m.group(3))
+        if m.group(1) not in want:
             continue
         model = (re.search(r'model_name="([^"]*)"', m.group(2)) or [None, ""])[1]
         c = res.setdefault(model, {"prompt": 0, "cached": 0, "gen": 0, "requests": 0})
         c[want[m.group(1)]] += float(m.group(3))
+    _live["gauges"] = load
     return res
+
+
+_live = {"gauges": None}
 
 
 def record_usage(nodes, running):
@@ -603,6 +613,14 @@ def record_usage(nodes, running):
         _stats.update(counters=counters, ts=t)
         if last_ts is None:
             return  # first sample after start: only a baseline
+        # live load for the Overview: the gauges, and tokens per second since the last poll
+        tot = lambda cs, k: sum(c[k] for c in (cs or {}).values())
+        span = t - last_ts
+        if counters and last and span > 0 and _live["gauges"] is not None:
+            rate = lambda k: max(0.0, tot(counters, k) - tot(last, k)) / span
+            STATUS["load"] = {**_live["gauges"], "prompt_tps": rate("prompt"), "gen_tps": rate("gen"), "ts": t}
+        else:
+            STATUS["load"] = None
         dt = min(t - last_ts, 5 * POLL_SECONDS)  # a gap (app down) is not counted as energy
         rows = {}
         for model, c in (counters or {}).items():

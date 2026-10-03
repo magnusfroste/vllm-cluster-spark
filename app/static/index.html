@@ -148,6 +148,21 @@ button.small { padding: 3px 9px; font-size: 12px; }
 #tip { position: fixed; pointer-events: none; background: var(--card); color: var(--fg); border: 1px solid var(--line);
        border-radius: 7px; padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: none; z-index: 10; }
 .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.dash { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.dash .card { margin-bottom: 0; }
+.tilecard h2 { display: flex; justify-content: space-between; align-items: baseline; }
+.tilecard h2 a { font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.big { font-size: 26px; font-weight: 650; color: var(--fg); font-variant-numeric: tabular-nums; }
+.mini { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 14px; margin-top: 8px; }
+.mini b { display: block; font-size: 11px; color: var(--muted); font-weight: 500; }
+.mini span { font-size: 15px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.nrow { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; padding: 6px 0;
+        border-top: 1px solid var(--line); font-size: 13px; color: var(--fg); }
+.nrow:first-child { border-top: 0; }
+.nrow .dot { width: 10px; height: 10px; }
+.evrow { font-size: 13px; padding: 4px 0; color: var(--fg); display: grid; grid-template-columns: 62px 1fr; gap: 8px; }
+.evrow .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+.evrow.error { color: var(--err); } .evrow.warn { color: var(--warn); }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -196,6 +211,14 @@ button.small { padding: 3px 9px; font-size: 12px; }
     <div class="kv" id="kv"></div>
     <div id="alerts"></div>
   </section>
+  <div class="dash">
+    <section class="card tilecard"><h2>Load now <a href="#api">API →</a></h2><div id="dLoad" class="muted">…</div></section>
+    <section class="card tilecard"><h2>Model <a href="#models">Models →</a></h2><div id="dModel" class="muted">…</div></section>
+    <section class="card tilecard"><h2>Nodes <a href="#nodes">Nodes →</a></h2><div id="dNodes" class="muted">…</div></section>
+    <section class="card tilecard"><h2>Today <a href="#usage">Usage →</a></h2><div id="dToday" class="muted">…</div></section>
+    <section class="card tilecard"><h2>Latest events <a href="#events">Events →</a></h2><div id="dEvents" class="muted">…</div></section>
+  </div>
+
   <section class="card" id="controlCard">
     <h2>Control</h2>
     <div class="btns">
@@ -326,6 +349,60 @@ function setFavicon(cls) {  // the tab shows the cluster's state: green ready, y
     <rect x="18" y="10" width="9" height="12" rx="2" fill="#fff"/><circle cx="25" cy="25" r="6.5" fill="${dot}" stroke="#fff" stroke-width="2"/></svg>`;
   $("#favicon").href = "data:image/svg+xml," + encodeURIComponent(svg);
 }
+// ---------- overview dashboard: short tiles, details on the pages they link to ----------
+function renderDash() {
+  const c = S.cluster || {}, L = S.load, cfg = S.config;
+  // load now
+  $("#dLoad").innerHTML = !c.healthy ? `<span>Shows once the model answers.</span>` :
+    `<div class="big">${L ? (L.running + L.waiting) : "–"} <span class="muted" style="font-size:14px;font-weight:400">request(s)</span></div>
+     <div class="mini">
+       <div><b>Running / waiting</b><span>${L ? `${L.running} / ${L.waiting}` : "–"}</span></div>
+       <div><b>KV cache in use</b><span>${L ? Math.round(100 * L.kv) + " %" : "–"}</span></div>
+       <div><b>Input</b><span>${L ? nf(L.prompt_tps) + " tok/s" : "–"}</span></div>
+       <div><b>Output</b><span>${L ? nf(L.gen_tps) + " tok/s" : "–"}</span></div>
+     </div>`;
+  // model
+  const cur = M?.current || {}, e = cur.entry || {};
+  $("#dModel").innerHTML = `<div style="font-size:16px;font-weight:600;color:var(--fg)">${esc(e.name || cur.model || "No model chosen")}
+      ${e.status ? `<span class="badge ${e.status}">${e.status === "verified" ? "Verified" : "Untested"}</span>` : ""}
+      ${S.setup?.pending ? `<span class="badge untested">Restart to apply</span>` : ""}</div>
+    <div class="mini">
+      <div><b>Running as</b><span>${esc((c.models || [])[0] || "–")}</span></div>
+      <div><b>Max context</b><span>${cur.max_model_len ? short(+cur.max_model_len) + " tokens" : "–"}</span></div>
+      <div><b>KV cache</b><span>${c.kv_tokens ? short(c.kv_tokens) + " tokens" : "–"}</span></div>
+      <div><b>Concurrency</b><span>${c.concurrency ? c.concurrency.x + "x" : "–"}</span></div>
+    </div>`;
+  // nodes
+  $("#dNodes").innerHTML = (S.nodes || []).map(n => {
+    const k = n.container, g = n.gpu || {}, m = n.mem || {}, low = m.available != null && m.available < cfg.mem_warn_gib * 2**30;
+    const st = !n.reachable ? "err" : k?.running ? (low ? "warn" : "ok") : "err";
+    return `<div class="nrow"><span class="dot ${st}"></span>
+      <span><b>${esc(n.role)}</b> <span class="muted">${esc(n.host)}</span></span>
+      <span class="muted" style="font-variant-numeric:tabular-nums">${n.reachable
+        ? `${g.temp ?? "–"} °C · ${g.power != null ? Math.round(g.power) : "–"} W · <span style="color:var(--${low ? "warn" : "muted"})">${gib(m.available)} free</span>`
+        : "unreachable"}</span></div>`;
+  }).join("") || "No nodes.";
+  // today, from the hourly usage rows
+  if (U) {
+    const mid = new Date(); mid.setHours(0, 0, 0, 0); const t0 = mid / 1000;
+    const rows = U.rows.filter(r => r.hour >= t0), sum = k => rows.reduce((a, r) => a + r[k], 0);
+    const tin = sum("prompt"), tout = sum("gen"), kwh = (sum("gpu_wh") + sum("extra_wh")) / 1000;
+    const hours = Array.from({length: 24}, (_, h) => rows.filter(r => new Date(r.hour * 1000).getHours() === h).reduce((a, r) => a + r.prompt + r.gen, 0));
+    const max = Math.max(...hours, 1), now = new Date().getHours();
+    const bars = hours.map((v, h) => `<rect x="${h * 10 + 1}" y="${30 - 28 * v / max}" width="8" height="${Math.max(v ? 1 : 0, 28 * v / max)}" rx="1.5"
+      fill="var(--series-1)" opacity="${h > now ? 0 : 1}"><title>${h}:00 · ${nf(v)} tokens</title></rect>`).join("");
+    $("#dToday").innerHTML = `<div class="mini" style="margin-top:0">
+        <div><b>Input tokens</b><span>${short(tin)}</span></div><div><b>Output tokens</b><span>${short(tout)}</span></div>
+        <div><b>Requests</b><span>${nf(sum("requests"))}</span></div>
+        <div><b>Energy</b><span>${kwh.toFixed(2)} kWh${kwh > 0 ? ` · ${short((tin + tout) / kwh)}/kWh` : ""}</span></div></div>
+      <svg viewBox="0 0 240 32" style="width:100%;height:40px;margin-top:10px" aria-label="Tokens per hour today">${bars}</svg>`;
+  }
+  // latest events
+  $("#dEvents").innerHTML = (S.events || []).slice(0, 4).map(e => `<div class="evrow ${e.kind}">
+      <span class="t">${hhmm(e.ts).slice(0, 5)}</span><span>${esc(e.msg.length > 90 ? e.msg.slice(0, 88) + "…" : e.msg)}</span></div>`).join("")
+    || "No events yet.";
+}
+
 // ---------- version, linked to the repo, with an hourly update check ----------
 let V = null;
 async function loadVersion() { try { V = await (await fetch("api/version")).json(); } catch (e) {} if (S) drawVersion(S.config); }
@@ -462,6 +539,7 @@ function render() {
   nb("overview", c.hung ? "!" : "", "err");
   renderNext(todo);
   renderUse();
+  renderDash();
   renderDisk();
   if (!opsDrawn) renderOps();
   if (M) drawModels(true);  // header only: running model and pending restart
