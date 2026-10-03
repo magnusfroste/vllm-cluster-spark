@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vLLM cluster</title>
 <link rel="icon" id="favicon" href="favicon.svg" type="image/svg+xml">
+<script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
 :root {
   --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
@@ -12,10 +13,14 @@
   --series-1: #2a78d6; --grid: #e3e6ea;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
+  :root:not([data-theme="light"]) { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
           --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14;
           --series-1: #3987e5; --grid: #2a313a; }
 }
+:root[data-theme="dark"] { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
+          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14;
+          --series-1: #3987e5; --grid: #2a313a; }
+:root { color-scheme: light dark; } :root[data-theme="light"] { color-scheme: light; } :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
        font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -39,6 +44,10 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 .sidefoot { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line); font-size: 13px;
             display: flex; flex-direction: column; gap: 6px; }
 .sidefoot .ver { font-size: 11px; }
+.theme { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.theme button { flex: 1; border: 0; border-radius: 0; padding: 4px 0; font-size: 12px; background: var(--card); color: var(--muted); }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button.on { background: var(--accent); color: #fff; }
 main { flex: 1; min-width: 0; max-width: 1680px; padding: 22px 28px 60px; }
 .pagehead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .page { display: none; } .page.on { display: block; }
@@ -163,6 +172,11 @@ button.small { padding: 3px 9px; font-size: 12px; }
     <div class="sidefoot">
       <div><span class="muted">Logged in as</span> <b id="whoami">…</b></div>
       <a href="logout">Log out</a>
+      <div class="theme" role="group" aria-label="Theme">
+        <button data-theme-set="system" title="Follow the system">System</button>
+        <button data-theme-set="light" title="Light">Light</button>
+        <button data-theme-set="dark" title="Dark">Dark</button>
+      </div>
       <div class="muted ver" id="version"></div>
     </div>
   </aside>
@@ -312,6 +326,32 @@ function setFavicon(cls) {  // the tab shows the cluster's state: green ready, y
     <rect x="18" y="10" width="9" height="12" rx="2" fill="#fff"/><circle cx="25" cy="25" r="6.5" fill="${dot}" stroke="#fff" stroke-width="2"/></svg>`;
   $("#favicon").href = "data:image/svg+xml," + encodeURIComponent(svg);
 }
+// ---------- version, linked to the repo, with an hourly update check ----------
+let V = null;
+async function loadVersion() { try { V = await (await fetch("api/version")).json(); } catch (e) {} if (S) drawVersion(S.config); }
+function drawVersion(cfg) {
+  const repo = V?.repo;
+  const ver = repo ? `<a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" title="Version history on GitHub">vllmapp ${esc(cfg.version)}</a>`
+                   : `vllmapp ${esc(cfg.version)}`;
+  const upd = V?.update ? ` · <a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" style="color:var(--warn)" title="Newer on GitHub: ${esc(V.latest)}">update available (${esc(V.latest)})</a>` : "";
+  $("#version").innerHTML = `${ver} · agent v${esc(cfg.agent_version)}${upd}`
+    + (repo ? `<br><a href="${esc(repo)}" target="_blank" rel="noopener">GitHub ↗</a>` : "");
+}
+loadVersion(); setInterval(loadVersion, 3600 * 1000);
+
+// ---------- theme: System follows the OS, Light/Dark override it (kept in this browser) ----------
+function theme() { try { return localStorage.getItem("vllmapp-theme") || "system"; } catch (e) { return "system"; } }
+function setTheme(t) {
+  try { t === "system" ? localStorage.removeItem("vllmapp-theme") : localStorage.setItem("vllmapp-theme", t); } catch (e) {}
+  if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.classList.toggle("on", b.dataset.themeSet === t));
+  const f = $("#logframe"); if (f?.contentDocument?.documentElement) {  // the embedded log page follows along
+    if (t === "system") delete f.contentDocument.documentElement.dataset.theme; else f.contentDocument.documentElement.dataset.theme = t; }
+  try { drawUsage(); } catch (e) {}  // not ready yet on the first call, while the page loads
+}
+document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => setTheme(b.dataset.themeSet));
+setTheme(theme());
+
 const PAGES = [...document.querySelectorAll("[data-page]")].map(p => p.dataset.page);
 function showPage() {
   let t = location.hash.slice(1);
@@ -377,7 +417,7 @@ function render() {
   $("#sdot").className = $("#tdot").className = "dot " + cls;
   setFavicon(cls);
   $("#whoami").textContent = cfg.user || "";
-  $("#version").textContent = `vllmapp ${cfg.version} · agent v${cfg.agent_version}`;
+  drawVersion(cfg);
   $("#alerts").innerHTML = a;
 
   const busy = S.action?.name;

@@ -33,7 +33,9 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.4.7"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.4.9"  # bump on every release that changes the app; shown in the menu
+
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -1073,10 +1075,16 @@ def auth(request: Request):
 LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>vLLM cluster</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
 :root { --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea; --accent: #0969da; --err: #cf222e; }
-@media (prefers-color-scheme: dark) { :root { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
-  --line: #2a313a; --accent: #4493f8; --err: #f85149; } }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
+  --line: #2a313a; --accent: #4493f8; --err: #f85149; }
+}
+:root[data-theme="dark"] { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
+  --line: #2a313a; --accent: #4493f8; --err: #f85149; }
+:root { color-scheme: light dark; } :root[data-theme="light"] { color-scheme: light; } :root[data-theme="dark"] { color-scheme: dark; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
        display: grid; place-items: center; min-height: 100vh; }
 form { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 22px; width: min(320px, calc(100vw - 32px)); }
@@ -1236,6 +1244,35 @@ def api_usage(days: int = 90):
     keys = ("hour", "model", "prompt", "cached", "gen", "requests", "gpu_wh", "extra_wh")
     return {"rows": [dict(zip(keys, r)) for r in rows], "extra_watts": ops()["extra_watts"],
             "nodes": len(NODES)}
+
+
+_latest = {"ts": 0, "version": None}
+
+
+def latest_version():
+    """APP_VERSION on the repo's main branch, checked at most once an hour."""
+    if not GITHUB_REPO or now() - _latest["ts"] < 3600:
+        return _latest["version"]
+    _latest["ts"] = now()
+    code, body = http_get(f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/app/main.py", timeout=10)
+    m = re.search(r'^APP_VERSION = "([0-9.]+)"', body or "", re.M) if code == 200 else None
+    if m:
+        _latest["version"] = m.group(1)
+    return _latest["version"]
+
+
+def newer(a, b):
+    try:
+        return tuple(map(int, a.split("."))) > tuple(map(int, b.split(".")))
+    except (AttributeError, ValueError):
+        return False
+
+
+@app.get("/api/version", dependencies=[Depends(auth)])
+def api_version():
+    latest = latest_version()
+    return {"version": APP_VERSION, "latest": latest, "update": newer(latest, APP_VERSION),
+            "repo": f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else None}
 
 
 @app.get("/api/apikey", dependencies=[Depends(auth)])
