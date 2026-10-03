@@ -17,9 +17,17 @@ Once the app is deployed, everything happens from its pages, with a menu on the 
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
 | **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the app writes |
 
-The bottom of the menu shows who is logged in (`ADMIN_USER`), Log out, and the app and agent
-versions. The browser tab's icon shows the cluster's state: green when it answers, yellow
-while it starts, red on a problem.
+The bottom of the menu shows who is logged in (`ADMIN_USER`), Log out, a theme switch, and the
+app and agent versions:
+
+- **Theme:** System follows the computer's light or dark setting; Light and Dark override it.
+  The choice is kept in the browser and also applies to the log page and the login page.
+- **Version:** links to the commit history on GitHub, with a link to the repo under it. Once an
+  hour the app checks the version on the repo's `main` branch and shows **update available**
+  when it is newer than the one running. Deploy again in Easypanel to update.
+
+The browser tab's icon shows the cluster's state: green when it answers, yellow while it
+starts, red on a problem.
 
 Behind the pages the app writes `.env`, `compose.yaml`, `entrypoint.sh` and any model patches
 to every node (the network interface and RoCE HCAs are detected per node), and auto-recover
@@ -191,6 +199,7 @@ nodes have now.
 | `IF_NAMES` / `IB_HCAS` | detected | `;`-separated per node, if detection gets it wrong |
 | `CLUSTER_DIR` | `~/vllm-cluster` | on the nodes, set in the agent's config at install |
 | `CONFIG_MODE` | `managed` | `existing` never writes to the nodes (for a hand-written setup) |
+| `GITHUB_REPO` | `magnusfroste/vllm-cluster-spark` | `owner/name` for the version links and the update check; point it at your fork |
 | `VLLM_PORT`, `POLL_SECONDS` | `8000`, `15` | |
 
 Auto-recover, the reboot button, the timeouts and the public URL are set in the app under
