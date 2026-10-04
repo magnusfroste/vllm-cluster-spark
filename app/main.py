@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.6.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.6.1"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 
@@ -553,7 +553,8 @@ def setup_summary(nodes, running=()):
             "patchset_missing": bool(c["patchset"]) and c["patchset"] not in PATCHSETS,
             "agent_version": AGENT_VERSION, "nodes": per,
             "pending": CONFIG_MODE == "managed" and (
-                applied is not None and applied != applied_key(c)
+                applied is not None and any(applied.get(k, d) != v for k, v in applied_key(c).items()
+                                            for d in [{"executor": "ray", "env": {}}.get(k)])
                 or bool(running) and bool(c["served_model_name"]) and c["served_model_name"] not in running),
             "model_ready": bool(c["model"]) and all((p["model"] or {}).get("present") for p in per)}
 
