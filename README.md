@@ -234,7 +234,11 @@ Each ready-made model is a file in `app/models/`:
 }
 ```
 
-Optional: `revision` pins a commit, and `patchset` names a folder in `app/patchsets/`. Set
+Optional: `revision` pins a commit; `patchset` names a folder in `app/patchsets/` (`"none"` turns
+the automatic match off); `env` adds environment variables to the container; and `executor`
+says how the nodes join: `ray` (the default, for images with Ray) or `mp`, vLLM's own
+multi-node mode, where every node runs `vllm serve` with its node rank and the workers run
+`--headless`. Official vLLM images no longer ship Ray, so newer models usually need `mp`. Set
 `status` to `verified` once the model has run on real hardware and answered a checkable prompt
 correctly, and write what you saw in `notes`. Models under ~100 GB fit on a single Spark, but
 the app always runs across all nodes.

@@ -9,8 +9,12 @@
   "status": "untested",
   "gpu_mem_util": "0.83",
   "max_model_len": "262144",
-  "vllm_args": "--trust-remote-code --reasoning-parser mimo --tool-call-parser mimo --enable-auto-tool-choice --generation-config vllm --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Does NOT work yet on 2 \u00d7 DGX Spark with the pinned image: it loads and answers with fluent nonsense (tested 2026-10-04, with the MoE on both DEEPGEMM_MXFP4 and Marlin). The patch set fixes two real bugs in the image's fp8 qkv sharding at TP=2, but something else in this image's MiMo support is still wrong. Xiaomi points to a dedicated vLLM image for MiMo-V2.5. Xiaomi's MoE, 309B total / 15B active, up to 1M context.",
-  "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563",
-  "patchset": "mimo-v2.6-flash-fp8"
+  "vllm_args": "--trust-remote-code --reasoning-parser mimo --tool-call-parser mimo --enable-auto-tool-choice --generation-config vllm --moe-backend marlin --no-async-scheduling --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "Xiaomi's MoE, 309B total / 15B active, up to 1M context. Runs on vLLM's official MiMo image (mimo-v26-aarch64-cu130, vLLM 0.29.1), which has no Ray, so the nodes join with vLLM's own multi-node mode. DeepGEMM is off and the MoE uses Marlin: both corrupt or crash on GB10 otherwise, according to two 2\u00d7 Spark recipes. The older nightly image answered with nonsense.",
+  "image": "vllm/vllm-openai@sha256:3a535c2156286dd4d535a6b84220126fb72f88e5c84979ec631fa753f007a179",
+  "patchset": "none",
+  "executor": "mp",
+  "env": {
+    "VLLM_USE_DEEP_GEMM": "0"
+  }
 }

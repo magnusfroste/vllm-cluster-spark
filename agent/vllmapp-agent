@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "6"
+VERSION = "7"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -27,7 +27,7 @@ SCAN = re.compile(
     r"Loading safetensors checkpoint shards|Available KV cache memory|GPU KV cache size"
     r"|Maximum concurrency|Running FlashInfer autotune"
     r"|Capturing CUDA graph|Graph capturing finished|Application startup complete"
-    r"|Starting vLLM API server|Väntar på|Alla noder uppe|All nodes up"
+    r"|Starting vLLM API server|Starting vLLM with|Väntar på|Alla noder uppe|All nodes up"
     r"|Traceback|RuntimeError|ValueError|Timed out|out of memory|No available memory"
     r"|ActorDied|ActorHandleNotFound|RayWorkerError|Killed"
 )
