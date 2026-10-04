@@ -7,30 +7,22 @@ and must be rebased for another image.
 
 ## The bug
 
-`_shard_fp8_qkv_proj` splits the fused FP8 `qkv_proj` weight across TP ranks when a rank gets
-more than one KV head. It dequantizes each KV group with its block scales, reorders the rows
-into `[Q… | K… | V…]` and quantizes again.
+`_shard_fp8_qkv_proj` splits the fused FP8 `qkv_proj` weight across TP ranks. It assumed
+the checkpoint interleaves Q, K and V per KV group (`[Q_1 K_1 V_1 | Q_2 K_2 V_2 | …]`), but
+the model's own code (`modeling_mimo_v2.py` in the checkpoint) splits the fused output with
+`qkv.split([q_size, k_size, v_size])`: the layout is `[Q_all | K_all | V_all]`. At TP=2:
 
-The 128×128 scale blocks run over the whole concatenated weight, but the function slices the
-scales per group as if every group started on a block boundary
-(`scale_rows_per_group = s_full.shape[0] // num_kv_heads`). A group is not a whole number of
-blocks:
-
-| Layers | KV heads | Rows per group | Blocks per group |
-|---|---|---|---|
-| sliding window | 8 | 1856 | 14.5 |
-| full attention | 4 | 3392 | 26.5 |
-
-With TP=2 on two DGX Sparks:
-
-- **Sliding-window layers crash** at load: `The size of tensor a (1856) must match the size of
-  tensor b (1792)`.
-- **Full-attention layers load silently wrong**: every group after the first gets the wrong
-  scales. Measured against the checkpoint, the weights are off by 29 % (rank 0) and 56 %
-  (rank 1), which would give fluent nonsense.
+- **Sliding-window layers crash** at load, because the per-group slicing of the scale blocks
+  doesn't fit (`The size of tensor a (1856) must match the size of tensor b (1792)`).
+- With only that fixed (our first version of this patch, 29/9), the model **loaded and
+  answered with fluent nonsense**: every rank got the wrong rows of Q, K and V.
 
 ## The fix
 
-Expand the row scales for the whole weight first, then take each group's rows from that.
-Tested on CPU against the real checkpoint: the resharded weights match a reference
-dequantization within 0.6–1.6 %, the normal noise of quantizing back to FP8.
+Each rank takes its share of the heads from each of Q, K and V and returns them as
+`[Q_r | K_r | V_r]`. At TP=2 those shares start and end on 128-row scale blocks in both kinds
+of layer (Q 6144 rows; K 768 or 384; V 512 or 256), so the FP8 weights and scales are sliced
+as they are, with no requantization. Tested on CPU against the real checkpoint, with the
+reference split the way the model's own code splits it: the difference is exactly zero for
+both ranks and both layer types. If the shares don't align with the blocks (another TP size),
+the function falls back to dequantizing the share and quantizing it again.

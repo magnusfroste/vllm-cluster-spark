@@ -473,69 +473,43 @@ def _shard_fp8_qkv_proj(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Shard the fp8 qkv_proj weights for ``tp_rank``.
 
-    The checkpoint stores the fused QKV as ``num_kv_heads`` contiguous groups
-    (one per KV head; ``n`` below), each ordered ``[Q | K | V]``:
+    vllmapp patch. The fused weight in the checkpoint is laid out as
+    ``[Q_all | K_all | V_all]``: the model's own code (modeling_mimo_v2.py) splits
+    it with ``qkv.split([q_size, k_size, v_size])``. The original function assumed
+    it was interleaved per KV group (``[Q_1 K_1 V_1 | Q_2 K_2 V_2 | ...]``), which
+    gave every rank the wrong rows and the model produced nonsense at TP > 1.
 
-        [Q_1 | K_1 | V_1 | Q_2 | K_2 | V_2 | ... | Q_n | K_n | V_n]
-
-    Per group, Q has ``(num_heads / num_kv_heads) * head_dim`` rows, K has
-    ``head_dim`` rows, and V has ``v_head_dim`` rows.
-
-    Each TP rank owns ``g = num_kv_heads / tp_size`` of these groups, and the
-    forward expects them de-interleaved into a single Q, K, and V block:
-
-        [Q_1 | Q_2 | ... | Q_g | K_1 | K_2 | ... | K_g | V_1 | V_2 | ... | V_g]
-
-    When ``g == 1`` the rank's slice is already ``[Q | K | V]``, so a plain
-    chunk suffices. When ``g > 1`` we cannot reach the de-interleaved layout by
-    re-permuting the fp8 block scales: each scale covers a 128-row block, and
-    since K is 192 rows (1.5 blocks) a block straddles the K/V boundary, so no
-    whole-block permutation produces it. Instead we dequantize this rank's
-    groups to float (dropping the block constraint), reorder the rows into the
-    layout above (Q, K, and V then each span a whole number of blocks), and
-    re-quantize to fp8.
+    This rank takes its share of the heads from each of Q, K and V and returns them
+    as ``[Q_r | K_r | V_r]``, which is what the forward expects. When the shares
+    start and end on scale-block boundaries (true for MiMo-V2.6-Flash at TP=2 in
+    both its sliding-window and its full-attention layers), the fp8 weights and
+    their scales are sliced as they are, exactly. Otherwise the share is
+    dequantized with the global scales and quantized again.
     """
-    assert tp_size <= num_kv_heads and num_kv_heads % tp_size == 0, (
-        "TP size must evenly split the number of KV heads."
+    assert num_heads % tp_size == 0 and num_kv_heads % tp_size == 0, (
+        "TP size must evenly split the number of heads and KV heads."
     )
+    q_size = num_heads * head_dim
+    k_size = num_kv_heads * head_dim
+    v_size = num_kv_heads * v_head_dim
+    spans = []
+    for start, size in ((0, q_size), (q_size, k_size), (q_size + k_size, v_size)):
+        n = size // tp_size
+        spans.append((start + tp_rank * n, n))
 
-    kv_heads_per_rank = num_kv_heads // tp_size
-    if kv_heads_per_rank == 1:
-        # One KV head per rank. The weights and scale can be trivially sharded
-        # without re-quantization.
-        w = w_full.chunk(tp_size, dim=0)[tp_rank]
-        s = s_full.chunk(tp_size, dim=0)[tp_rank]
+    if all(a % block == 0 and n % block == 0 for a, n in spans):
+        w = torch.cat([w_full[a : a + n] for a, n in spans], dim=0)
+        s = torch.cat([s_full[a // block : (a + n) // block] for a, n in spans], dim=0)
         return w, s
 
-    q_rows_per_group = (num_heads // num_kv_heads) * head_dim
-    k_rows_per_group = head_dim
-    v_rows_per_group = v_head_dim
-    rows_per_group = q_rows_per_group + k_rows_per_group + v_rows_per_group
-    # vllmapp patch: the scale blocks run over the whole concatenated weight, and a
-    # group is not a whole number of blocks (SWA layers: 1856 rows = 14.5 blocks),
-    # so the scales for a group can't be sliced per group. Expand the row scales for
-    # the whole weight first and take the group's rows from that.
     s_rows = s_full.to(torch.float32).repeat_interleave(block, dim=0)[: w_full.shape[0]]
-    qs, ks, vs = [], [], []
-    for g_idx in range(tp_rank * kv_heads_per_rank, (tp_rank + 1) * kv_heads_per_rank):
-        row_start = g_idx * rows_per_group
-        # Dequantize this group's weights.
-        w_g = w_full[row_start : row_start + rows_per_group].to(torch.float32)
-        s_g_expanded = s_rows[row_start : row_start + rows_per_group].repeat_interleave(
-            block, dim=1
-        )[:, : w_g.shape[1]]
-        w_g_dequant = w_g * s_g_expanded
-        # Track the dequantized q, k, and v weights separately.
-        qs.append(w_g_dequant[:q_rows_per_group])
-        ks.append(w_g_dequant[q_rows_per_group : q_rows_per_group + k_rows_per_group])
-        vs.append(w_g_dequant[q_rows_per_group + k_rows_per_group :])
-
-    # Combine the q, k, and v weights into the following layout:
-    # [Q_1, Q_2, .., Q_g, K_1, K_2, ..., K_g, V_1, V_2, ..., V_g]
-    grouped = torch.cat([torch.cat(qs), torch.cat(ks), torch.cat(vs)], dim=0)
-    # Quantize back to fp8.
+    parts = []
+    for a, n in spans:
+        w_p = w_full[a : a + n].to(torch.float32)
+        s_p = s_rows[a : a + n].repeat_interleave(block, dim=1)[:, : w_p.shape[1]]
+        parts.append(w_p * s_p)
     return scaled_quantize(
-        grouped, GroupShape(block, block), w_full.dtype, compute_dtype=torch.float32
+        torch.cat(parts, dim=0), GroupShape(block, block), w_full.dtype, compute_dtype=torch.float32
     )
 
 
