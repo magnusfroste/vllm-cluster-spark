@@ -1,4 +1,13 @@
-# vllmapp
+# vLLM Cluster Spark
+
+**Private AI on your own NVIDIA DGX Spark cluster — with a control plane you'd expect from a cloud.**
+
+Two DGX Sparks can serve models no single box can hold, but getting there means Ray, RoCE, NCCL,
+per-node configs and a lot of SSH. This app turns that into one web page, inspired by Easypanel:
+set the cluster up, start it, watch it and fix it — and see what it costs to run, down to GPU
+temperature, power draw and tokens per kWh on every node. Your prompts never leave your hardware.
+
+## What it does
 
 Runs a vLLM model across two or more NVIDIA DGX Spark (GB10) nodes with tensor parallelism
 over Ray, and gives you one web page to set it up, start it, watch it and fix it. The app runs
