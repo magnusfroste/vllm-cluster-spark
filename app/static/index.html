@@ -27,9 +27,13 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 .layout { display: flex; min-height: 100vh; }
 .sidebar { width: 224px; flex: none; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column;
            background: var(--card); border-right: 1px solid var(--line); padding: 14px 10px; overflow-y: auto; }
-.brand { display: flex; gap: 10px; align-items: center; padding: 4px 8px 14px; }
-.brand b { font-size: 15px; }
-.brand .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+.brand { padding: 4px 8px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.brandrow { display: flex; gap: 9px; align-items: center; }
+.brandrow b { font-size: 16px; letter-spacing: -.01em; }
+.brandmodel { margin-top: 10px; padding: 5px 9px; border-radius: 7px; background: var(--code); border: 1px solid var(--line);
+              font: 12.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg);
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brandmeta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
 .navgroup { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
             padding: 14px 10px 4px; font-weight: 600; }
 .navitem { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: var(--fg); }
@@ -170,7 +174,11 @@ button.small { padding: 3px 9px; font-size: 12px; }
 <body>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><span class="dot" id="sdot"></span><div><b>vLLM cluster</b><div class="muted" id="sub"></div></div></div>
+    <div class="brand">
+      <div class="brandrow"><span class="dot" id="sdot"></span><b>vLLM cluster</b></div>
+      <div class="brandmodel" id="bModel" title="The model the cluster serves">…</div>
+      <div class="brandmeta" id="bMeta"></div>
+    </div>
     <nav>
       <div class="navgroup">cluster</div>
       <a class="navitem" data-nav="overview" href="#overview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"/></svg><span>Overview</span><span class="navbadge" id="nb-overview"></span></a>
@@ -467,7 +475,14 @@ async function refresh() {
 
 function render() {
   const c = S.cluster || {}, cfg = S.config;
-  $("#sub").textContent = `${(c.models || []).join(", ") || cfg.served_model_name || ""} · head ${cfg.head} · ${cfg.workers.length} worker(s) · updated ${S.updated ? hhmm(new Date(S.updated*1000)) : "–"}`;
+  const served = (c.models || []).join(", ");
+  $("#bModel").textContent = served || cfg.served_model_name || "No model running";
+  $("#bModel").title = served ? "The model the cluster serves" : "Chosen model, not running";
+  $("#bModel").style.opacity = served ? 1 : .6;
+  const stateText = c.healthy ? "Responding" : c.hung ? "Hung" : c.state === "starting"
+    ? `Starting${c.phase_pct != null ? " " + c.phase_pct + " %" : ""}` : (c.state || "…");
+  $("#bMeta").innerHTML = `<span>${esc(stateText)} · ${(cfg.nodes || []).length} nodes</span>
+    <span title="Last status update">${S.updated ? hhmm(new Date(S.updated * 1000)).slice(0, 5) : "–"}</span>`;
   const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err"
     : ["starting", "not responding"].includes(c.state) ? "warn" : "err";
   $("#dot").className = "dot " + cls;
