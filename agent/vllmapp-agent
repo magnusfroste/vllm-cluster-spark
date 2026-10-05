@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "7"
+VERSION = "8"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -328,8 +328,12 @@ def model_state(cache, repo, rev):
             "present": bool(files) and not partial and not (dl and dl["running"])}
 
 
-def setup(c, host_ip, head_ip, cache, repo, rev=""):
-    """Checks that need root to fix, plus the model's state in the HF cache."""
+def setup(c, host_ip, head_ip, cache, repo, rev="", image="-"):
+    """Checks that need root to fix, plus the model's state in the HF cache and whether the
+    model's vLLM image is on this node (Easypanel's daily cleanup removes unused images)."""
+    rev = "" if rev == "-" else rev
+    if image != "-" and not SAFE_IMAGE.match(image):
+        return {"setup_error": "invalid image"}
     if not (re.match(r"^[\d.]+$", host_ip) and re.match(r"^[\d.]+$", head_ip)
             and SAFE_PATH.match(cache) and (repo == "-" or SAFE_REPO.match(repo))
             and (not rev or SAFE_REV.match(rev))):
@@ -352,6 +356,9 @@ def setup(c, host_ip, head_ip, cache, repo, rev=""):
         p = os.path.dirname(p)
     st = os.statvfs(p)
     checks["disk_free"] = {"ok": True, "bytes": st.f_bavail * st.f_frsize}
+    if image != "-":
+        rc, _, _ = run(["docker", "image", "inspect", "--format", "{{.Id}}", image], timeout=20)
+        checks["image"] = {"ok": rc == 0, "detail": image}
     checks["reboot_sudo"] = {"ok": can_reboot(), "optional": True}
     checks["drop_caches_sudo"] = {"ok": can_drop_caches(), "optional": True}
     rdma = set()  # the cluster link ports: RoCE interfaces are not for clients
@@ -473,6 +480,9 @@ def main():
         readfile(c, args[0])
     elif cmd == "put" and args:
         putfile(c, args[0])
+    elif cmd == "pull-image" and args and SAFE_IMAGE.match(args[0]):
+        rc, so, se = run(["docker", "pull", "-q", args[0]], timeout=3600)
+        out({"rc": rc, "out": (so + se)[-500:]})
     elif cmd == "download" and len(args) >= 3:
         download(*args[:4])
     elif cmd == "delete-model" and len(args) == 3:

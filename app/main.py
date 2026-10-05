@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.6.2"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.7.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 
@@ -357,7 +357,8 @@ def http_get(url, headers=None, timeout=5):
 def node_status(n):
     t0 = now()
     c = cfg()
-    args = f" {n['host']} {HEAD_HOST} {shlex.quote(HF_CACHE_DIR)} {c['model'] or '-'} {c['revision']}"
+    args = (f" {n['host']} {HEAD_HOST} {shlex.quote(HF_CACHE_DIR)} {c['model'] or '-'} {c['revision'] or '-'}"
+            f" {shlex.quote(c['image']) if c['image'] else '-'}")
     rc, st, err = ssh(n["host"], "status" + args.rstrip(), timeout=30)
     res = {**n, "reachable": st is not None and "error" not in (st or {}),
            "latency_ms": int((now() - t0) * 1000), "error": None if st else redact(err)[-300:]}
@@ -804,8 +805,15 @@ def do_reboot():
 
 
 def do_pull():
+    """Pull the chosen model's image on every node, so a switch doesn't wait for it (and the
+    image Easypanel's daily cleanup removed from the head comes back)."""
+    image = cfg()["image"]
+    if not image:
+        raise RuntimeError("no model chosen")
     with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
-        list(ex.map(lambda n: on_nodes([n], "pull", timeout=3600), NODES))
+        ok = all(ex.map(lambda n: on_nodes([n], f"pull-image {shlex.quote(image)}", timeout=3600), NODES))
+    if not ok:
+        raise RuntimeError("the image could not be pulled on every node — see Events")
 
 
 def write_config():

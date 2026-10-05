@@ -561,6 +561,7 @@ const FIX = {
   head_reachable: ["Head reachable over the link", h =>
     `# Check the cable, and that the link IPs of all nodes are in the same subnet\nping -c3 ${S.config.head}`],
   disk_free: ["Disk space for the model", null],
+  image: ["The model's vLLM image is on this node", null],
   reboot_sudo: ["Passwordless reboot (optional, for the reboot button)", h => SUDOERS],
   drop_caches_sudo: ["Free the page cache before a start (optional, gives the KV cache more room)", h => SUDOERS],
 };
@@ -604,6 +605,7 @@ function renderSetup() {
         let l = typeof label === "function" ? label(n.host) : label;
         if (k === "link_ip" && c.ok) l += ` <span class="muted">(${esc(c.detail)})</span>`;
         if (k === "disk_free") l += ` <span class="muted">(${gb(c.bytes)} free${c.need ? `, needs ${gb(c.need)}` : ""})</span>`;
+        if (k === "image" && !c.ok) l += ` <span class="muted">— press <b>Pull image</b> on Overview, or Start pulls it (slower). Easypanel's daily cleanup removes images no container uses.</span>`;
         row(c.ok, l, fix ? fix(n.host) : c.detail, c.optional);
       }
       const m = n.model;
@@ -646,6 +648,9 @@ function renderNext(todo) {
   else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in Easypanel's env and deploy.`; }
   else if (st.no_model) { step = "Step 1 of 4"; text = "Pick a model."; btn = `<button class="primary" onclick="go('#modelCard')">Choose model</button>`; }
   else if (todo) { step = "Step 2 of 4"; text = `Fix ${todo} thing(s) on the nodes.`; btn = `<button class="primary" onclick="go('#setupCard')">Show what</button>`; }
+  else if (st.model_ready && (st.nodes || []).some(n => n.checks?.image && !n.checks.image.ok) && !c.healthy) {
+    step = "Step 4 of 4"; text = `The image for ${name} is missing on a node. Pull it first, so the start doesn't wait for it.`;
+    btn = `<button class="primary" onclick="act('pull')">Pull image</button>`; }
   else if (!st.model_ready && dl.length) {
     const b = Math.min(...dl.map(n => n.model?.bytes || 0)), pct = st.size ? Math.floor(100 * b / st.size) : null;
     step = "Step 3 of 4"; text = `Downloading ${name}${pct != null ? `: ${pct} %` : "…"}. It continues if you close the page.`; }
