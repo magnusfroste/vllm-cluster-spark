@@ -57,9 +57,13 @@ no open sockets and 0 % CPU. The app's download turns both off. Judge progress b
 disk, which the Setup card shows, not by whether the process is alive. Changing download
 backend throws away partial files.
 
-### Nodes run different image IDs
-Ray requires identical builds on every node. Pin `VLLM_IMAGE` to a digest
-(`image@sha256:…`) and press **Pull image**. The status card warns when the IDs differ.
+### A node is missing the model's image, or runs a different build
+Every node must run the same vLLM build, whether the model uses Ray or `mp`. Each catalog
+model names its own image, pinned to a digest (`image@sha256:…`), and **Nodes** shows
+whether that image is on each node. If it is missing, press **Pull image**. On a node that
+runs Easypanel, the daily Docker cleanup can remove the image of a model that is not
+running, so check this after switching models. The status card warns when the image IDs
+differ between nodes.
 
 ### Wifi drops and does not come back (NetworkManager "no-secrets")
 When a WPA handshake breaks during roaming, NetworkManager treats it as a wrong password,
