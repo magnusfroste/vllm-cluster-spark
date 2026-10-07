@@ -160,6 +160,10 @@ shows the bytes on disk per node. xet and `hf_transfer` are turned off, since bo
 large downloads on DGX Spark. The download continues if you close the page, and a stopped
 download resumes where it left off.
 
+`hf download` fetches the whole repo, so the app checks its size first. It refuses a repo that is
+much larger than the model's `size_gb` (GGUF repos often hold every quantization, terabytes in
+all) or that does not fit on a node's disk. Pick a repo that holds one variant.
+
 It takes a while: a ~190 GB model at 30 MB/s is close to two hours, and over wifi it can be
 four. The progress bar under **Nodes** is the bytes on disk, so it shows a stalled download.
 

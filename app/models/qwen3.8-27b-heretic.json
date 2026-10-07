@@ -1,0 +1,17 @@
+{
+  "order": 6.5,
+  "id": "qwen3.8-27b-heretic",
+  "name": "Qwen3.8-27B Heretic, uncensored (NVFP4 W4A16)",
+  "model": "llmfan46/Qwen3.8-27B-Ultra-Uncensored-Heretic-Native-MTP-Preserved-NVFP4",
+  "served_model_name": "qwen3.8-27b-heretic",
+  "size_gb": 20.6,
+  "min_nodes": 1,
+  "status": "untested",
+  "gpu_mem_util": "0.70",
+  "max_model_len": "262144",
+  "vllm_args": "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --language-model-only --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
+  "notes": "Abliterated (Heretic) Qwen3.8-27B: dense, hybrid linear/full attention, refusals removed. ModelOpt NVFP4 weights with 16-bit activations (W4A16), which vLLM runs with the FP4 Marlin kernel. Uses the same official vLLM image as MiMo (vLLM 0.29.1, multi-node without Ray); support for the quantization, the architecture and the parsers was checked in that image, but the model has not been run here yet. The vision tower is skipped with --language-model-only. 20.6 GB of weights leaves most of the memory for KV cache, so a lower GPU memory share is enough. Thinking is on by default.",
+  "image": "vllm/vllm-openai@sha256:3a535c2156286dd4d535a6b84220126fb72f88e5c84979ec631fa753f007a179",
+  "patchset": "none",
+  "executor": "mp"
+}

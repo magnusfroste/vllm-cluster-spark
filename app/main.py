@@ -33,7 +33,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.7.1"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.7.2"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 
@@ -839,10 +839,32 @@ def write_config():
     save_state(s)
 
 
+def check_download_size(c):
+    """`hf download` fetches the whole repo. Refuse repos that hold far more than the model
+    (GGUF repos with every quantization run to terabytes) or that don't fit on a node's disk."""
+    size = model_size()
+    if not size:
+        event("could not read the repo size from Hugging Face — downloading without the size check", "warn")
+        return
+    gb = size / 1e9
+    expected = c["entry"].get("size_gb")
+    if expected and gb > max(expected * 1.5, expected + 20):
+        raise RuntimeError(f"the repo holds {gb:.0f} GB but the model is {expected} GB — it contains other "
+                           "files too (several quantizations or GGUF variants); pick a repo with one variant")
+    for n in STATUS["nodes"]:
+        m = n.get("model") or {}
+        free = ((n.get("checks") or {}).get("disk_free") or {}).get("bytes")
+        need = size - m.get("bytes", 0)
+        if free is not None and not m.get("present") and need * 1.05 > free:
+            raise RuntimeError(f"{n['role']} {n['host']}: the download needs {need / 1e9:.0f} GB "
+                               f"but only {free / 1e9:.0f} GB is free")
+
+
 def do_download():
     c = cfg()
     if not (c["model"] and c["image"]):
         raise RuntimeError("no model chosen — pick one under Model")
+    check_download_size(c)
     cmd = f"download {shlex.quote(c['image'])} {c['model']} {shlex.quote(HF_CACHE_DIR)} {c['revision']}".rstrip()
 
     def one(n):
