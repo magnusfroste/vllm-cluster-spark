@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vLLM cluster</title>
+<title>vLLM Panel</title>
 <link rel="icon" id="favicon" href="favicon.svg" type="image/svg+xml">
 <script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
@@ -251,7 +251,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brandrow"><span class="dot" id="sdot"></span><b>vLLM cluster</b></div>
+      <div class="brandrow"><span class="dot" id="sdot"></span><b>vLLM Panel</b></div>
       <div class="brandmodel" id="bModel" title="The model the cluster serves">…</div>
       <div class="brandmeta" id="bMeta"></div>
     </div>
@@ -276,7 +276,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   <div class="content">
   <header class="appbar">
     <button class="iconbtn menubtn" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-    <span class="crumb"><span class="muted" style="font-weight:500">vLLM cluster</span> <span class="muted">/</span> <span id="crumb">Overview</span></span>
+    <span class="crumb"><span class="muted" style="font-weight:500">vLLM Panel</span> <span class="muted">/</span> <span id="crumb">Overview</span></span>
     <span class="spacer"></span>
     <a class="pill" href="#overview" id="tpill" title="Cluster state" style="color:var(--fg)"><span class="dot" id="tdot"></span><span id="tstate">…</span></a>
     <div class="theme" role="group" aria-label="Theme">
@@ -586,8 +586,8 @@ let V = null;
 async function loadVersion() { try { V = await (await fetch("api/version")).json(); } catch (e) {} if (S) drawVersion(S.config); }
 function drawVersion(cfg) {
   const repo = V?.repo;
-  const ver = repo ? `<a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" title="Version history on GitHub">vllmapp ${esc(cfg.version)}</a>`
-                   : `vllmapp ${esc(cfg.version)}`;
+  const ver = repo ? `<a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" title="Version history on GitHub">vLLM Panel ${esc(cfg.version)}</a>`
+                   : `vLLM Panel ${esc(cfg.version)}`;
   const upd = V?.update ? ` · <a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" style="color:var(--warn)" title="Newer on GitHub: ${esc(V.latest)}. To update: ${esc(V.update_hint || "")}">update available (${esc(V.latest)})</a>`
     + (V.update_hint ? `<br><span class="muted">update: <code>${esc(V.update_hint)}</code></span>` : "") : "";
   $("#version").innerHTML = `${ver} · agent v${esc(cfg.agent_version)}${upd}`
@@ -617,7 +617,7 @@ function showPage() {
   document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === t));
   $("#sidebar").classList.remove("open");
   const name = {api: "API", garageai: "GarageAI"}[t] || t[0].toUpperCase() + t.slice(1);
-  document.title = `${name} · vLLM cluster`;
+  document.title = `${name} · vLLM Panel`;
   $("#crumb").textContent = name;
   if (t === "logs") showLog();
   if (t === "usage") drawUsage?.();
@@ -902,7 +902,7 @@ function renderGuide(todo) {
      d: st.hf?.set ? `Account ${esc(st.hf.user || "")}.` : "Recommended: needed for gated models, and downloads go faster.",
      a: st.hf?.set ? "" : B("Add token", "go('#credsCard')")},
     {t: "Pick a model", req: true, done: !st.no_model,
-     d: !st.no_model ? esc(name) : rec ? `Recommended for ${n === 1 ? "one Spark" : n + " Sparks"}: ${esc(rec.name)}.`
+     d: !st.no_model ? esc(name) : rec ? `Recommended for ${n === 1 ? "one Spark" : n + " Sparks"}: ${esc(rec.name)}${rec.status === "verified" ? "" : " (not yet verified on DGX Spark)"}.`
         : `Choose one in the library; the verified ones are tested on ${n === 1 ? "one Spark" : n + " Sparks"} or more.`,
      a: st.no_model ? (rec ? B("Use " + esc(rec.name.split(" (")[0]), `guidePick('${esc(rec.id)}')`, true) : "") + B("Browse models", "location.hash='#models'") : ""},
     {t: "Download it to every Spark", req: true, done: !!st.model_ready,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — run vllmapp on the head node of a DGX Spark cluster, without Easypanel.
+# install.sh — run vLLM Panel on the head node of a DGX Spark (or a cluster of them), without Easypanel.
 #
 # It runs the app as one Docker container (image from GitHub's registry), with its settings in
 # ~/vllmapp/.env and its data in ~/vllmapp-data. Everything else, from the agent on the nodes to
@@ -152,7 +152,7 @@ if [ -f "$DIR/install.conf" ]; then
 fi
 
 if [ "$MODE" = uninstall ]; then
-  bold "Remove vllmapp"
+  bold "Remove vLLM Panel"
   docker rm -f "$NAME" >/dev/null 2>&1 && ok "container removed" || info "no container named $NAME"
   info "Kept: $DIR (settings) and $DATA (the app's SSH key, settings, statistics)."
   info "The cluster itself is not touched. Stop it from the app first if you want it stopped."
@@ -161,7 +161,7 @@ fi
 
 if [ "$MODE" = update ]; then
   [ -f "$DIR/.env" ] || die "no installation in $DIR — run without --update first"
-  bold "Update vllmapp"
+  bold "Update vLLM Panel"
   pull_image
   run_container
   save_conf
@@ -170,7 +170,7 @@ if [ "$MODE" = update ]; then
   exit 0
 fi
 
-bold "vllmapp — install on $(hostname)"
+bold "vLLM Panel — install on $(hostname)"
 mkdir -p "$DIR" "$DATA"
 chmod 700 "$DIR"
 
@@ -197,7 +197,7 @@ else
   API_KEY="$(openssl rand -hex 32)"
   umask 077
   cat > "$DIR/.env" <<EOF
-# vllmapp settings. Change them here, then run: bash $DIR/install.sh
+# vLLM Panel settings. Change them here, then run: bash $DIR/install.sh
 HEAD_HOST=$HEAD_HOST
 WORKER_HOSTS=$WORKER_HOSTS
 SSH_USER=$SSH_USER
@@ -214,7 +214,7 @@ bold "Starting the app"
 pull_image
 run_container
 save_conf
-ok "vllmapp is running"
+ok "vLLM Panel is running"
 
 url_ip="$(lan_ip)"; url_ip="${url_ip:-$(env_get HEAD_HOST)}"
 echo

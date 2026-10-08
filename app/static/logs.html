@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log · vLLM cluster</title>
+<title>Log · vLLM Panel</title>
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
@@ -54,7 +54,7 @@ footer { padding: 5px 16px; font-size: 12px; color: var(--muted); border-top: 1p
 </head>
 <body>
 <header>
-  <h1><a href="../">← vLLM cluster</a></h1>
+  <h1><a href="../">← vLLM Panel</a></h1>
   <nav class="tabs" id="tabs"></nav>
   <div class="ctl">
     <input type="search" id="filter" placeholder="Filter…">
@@ -136,7 +136,7 @@ async function load(full) {
     const r = await fetch(`../api/logs/${idx}?${q}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || d.detail || r.status);
-    document.title = `${d.role} log · vLLM cluster`;
+    document.title = `${d.role} log · vLLM Panel`;
     let fresh = d.lines.map(parse);
     if (!full) fresh = fresh.filter(l => l.ts > lastTs);
     if (fresh.length) lastTs = fresh[fresh.length - 1].ts;
