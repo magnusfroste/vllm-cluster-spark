@@ -217,6 +217,11 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .evrow { font-size: 13px; padding: 4px 0; color: var(--fg); display: grid; grid-template-columns: 62px 1fr; gap: 8px; }
 .evrow .t { color: var(--muted); font-variant-numeric: tabular-nums; }
 .evrow.error { color: var(--err); } .evrow.warn { color: var(--warn); }
+.sparkrow { display: grid; grid-template-columns: 14px 90px 1fr auto; gap: 10px; align-items: center; padding: 8px 0;
+            border-top: 1px solid var(--line); }
+.sparkrow:first-child { border-top: 0; }
+.sparkrow .dot { width: 10px; height: 10px; }
+ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 0; }
 .credgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 32px; }
 .credgrid > div > b { font-size: 15px; }
 .credgrid input[type=password] { flex: 1; min-width: 180px; }
@@ -300,6 +305,23 @@ button.small { padding: 3px 9px; font-size: 12px; }
   </div>
   <div class="page" data-page="nodes">
     <div class="pagehead"><h1>Nodes</h1><span class="muted">Setup checks and live status per node</span></div>
+  <section class="card" id="sparksCard">
+    <h2>Sparks in this cluster</h2>
+    <div id="sparks" class="muted">Loading…</div>
+    <details style="margin-top:12px" id="addDet"><summary>Add a Spark</summary>
+      <ol class="steps">
+        <li>Connect the new Spark to this one with the QSFP cable (with three or more, through a switch), and give it
+          internet over wifi or its LAN port: it downloads the image and the model itself.</li>
+        <li>On the new Spark, give the cluster link an address in the same subnet as this head
+          (<b id="addSubnet">…</b>), for example <b id="addSuggest">…</b>:
+          <pre id="addLinkCmd"></pre></li>
+        <li>Install the agent on it: the command under <b>Install the agent on a node</b> below, run as <code id="addUser"></code>.</li>
+        <li>Add its address here. Then download the model on it (<b>Download model</b> fetches it on every node) and press <b>Restart</b>.</li>
+      </ol>
+      <div class="row"><input type="text" id="addHost" placeholder="192.168.100.2" style="max-width:220px">
+        <button class="primary" id="addBtn">Add Spark</button><span id="addInfo" class="muted"></span></div>
+    </details>
+  </section>
   <section class="card" id="setupCard">
     <h2>Setup</h2>
     <div id="setup" class="muted">Loading…</div>
@@ -649,6 +671,7 @@ function render() {
   renderDisk();
   if (!opsDrawn) renderOps();
   renderCreds();
+  renderSparks();
   if (M) drawModels(true);  // header only: running model and pending restart
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
@@ -881,6 +904,60 @@ const OPSNUM = [
   ["mem_warn_gib", "Warn when a node has less free memory than this (GiB)"],
   ["extra_watts", "Other power per node (W), added to the GPU's own reading in Usage. The GPU reading leaves out CPU, memory, network and disks; measure at the wall to set it"],
 ];
+function renderSparks() {
+  const cfg = S.config, st = S.setup || {}, running = (S.nodes || []).some(n => n.container?.running);
+  const nodes = [{role: "head", host: cfg.head}, ...(cfg.workers || []).map(h => ({role: "worker", host: h}))];
+  const live = h => (S.nodes || []).find(n => n.host === h) || {};
+  $("#sparks").innerHTML = nodes.map(n => {
+    const l = live(n.host), cls = !l.reachable ? "err" : l.container?.running ? "ok" : "warn";
+    const what = !l.reachable ? "the app can't reach it yet" : l.container?.running ? "running" : "ready, not running";
+    return `<div class="sparkrow"><span class="dot ${cls}"></span><b>${esc(n.role)}</b>
+      <span><code>${esc(n.host)}</code> <span class="muted">${esc(l.hostname || "")} · ${what}</span></span>
+      <span>${n.role === "worker" ? `<button class="small danger" data-rm="${esc(n.host)}" ${running ? "disabled title='Stop the cluster first'" : ""}>Remove</button>`
+        : `<button class="small" id="headEdit" ${running ? "disabled title='Stop the cluster first'" : ""}>Change address</button>`}</span></div>`;
+  }).join("") + `<p class="muted" style="margin:10px 0 0">${nodes.length === 1
+      ? "One Spark: it runs the models that fit on one. Add a second for the big ones."
+      : `${nodes.length} Sparks: the model is split across all of them (tensor parallelism over the cluster link).`
+        + (nodes.length % 2 ? ` <span style="color:var(--warn)">Most models split only over 2, 4 or 8 Sparks (the count has to divide the model's attention heads), so ${nodes.length} may not start.</span>` : "")}
+    ${cfg.nodes_source === "env" ? " The list comes from the app's env (HEAD_HOST, WORKER_HOSTS); changing it here replaces that." : ""}
+    ${st.pending ? ` <span class="badge untested">Restart to apply</span>` : ""}</p>`;
+  // A head installed as a single Spark often has its address on wifi or the LAN port. A cluster
+  // needs it on the cluster link, a ConnectX port (its name ends in np0/np1).
+  const headIf = st.nodes?.[0]?.checks?.link_ip?.detail || "";
+  const offLink = headIf && !/np\d$/.test(headIf);
+  $("#sparks").innerHTML += offLink ? `<div class="warnbox">The head's address <code>${esc(cfg.head)}</code> is on
+    <code>${esc(headIf)}</code>, not on the cluster link. Before adding a Spark, give this node a link address too
+    (step 2 below, on this node, for example <code>192.168.100.1</code>), then <b>Change address</b> to it.</div>` : "";
+  const sub = (offLink ? "192.168.100.1" : cfg.head || "").split(".").slice(0, 3).join(".");
+  const taken = new Set(nodes.map(n => n.host));
+  let k = 2; while (taken.has(`${sub}.${k}`)) k++;
+  $("#addSubnet").textContent = `${sub}.0/24`;
+  $("#addSuggest").textContent = `${sub}.${k}`;
+  $("#addHost").placeholder = `${sub}.${k}`;
+  $("#addUser").textContent = cfg.ssh_user;
+  $("#addLinkCmd").textContent = `ip -br link   # the port the QSFP cable is in shows UP\n`
+    + `sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses ${sub}.${k}/24\n`
+    + `sudo nmcli con up cluster`;
+  document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => nodesCall("remove", b.dataset.rm,
+    `Remove ${b.dataset.rm} from the cluster? The model and files on it stay; the app stops managing it.`));
+  const he = $("#headEdit"); if (he) he.onclick = () => {
+    const h = prompt("The head's address on the cluster link (the app reaches the head and the API there):", cfg.head);
+    if (h && h.trim() !== cfg.head) nodesCall("head", h.trim());
+  };
+}
+async function nodesCall(action, host, ask, force) {
+  if (ask && !confirm(ask)) return;
+  $("#addInfo").textContent = action === "add" ? "Checking…" : "";
+  const r = await fetch("api/nodes", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({action, host, force: !!force})});
+  const d = await r.json();
+  if (r.status === 422 && confirm(d.detail + "\n\nAdd it anyway?")) return nodesCall(action, host, null, true);
+  if (!r.ok) { $("#addInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
+  $("#addInfo").innerHTML = action === "add" ? `<span style="color:var(--ok)">Added. Install the agent on it, download the model, then Restart.</span>` : "";
+  $("#addHost").value = "";
+  await refresh(); try { await loadModels(); } catch (e) {}
+}
+$("#addBtn").onclick = () => { const h = $("#addHost").value.trim() || $("#addHost").placeholder; nodesCall("add", h); };
+
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;
   $("#hfState").innerHTML = !hf.set ? `<span style="color:var(--warn)">Not set.</span>`

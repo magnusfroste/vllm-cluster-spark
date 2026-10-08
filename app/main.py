@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import shlex
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -34,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.12.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.13.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -44,8 +45,10 @@ ENV_WHERE = (f"{_m.group(1)}/.env, then run: bash {_m.group(1)}/install.sh" if _
              else "the app's Environment tab in Easypanel, then Deploy")
 
 # ---------- configuration ----------
-HEAD_HOST = env("HEAD_HOST")
-WORKER_HOSTS = [h.strip() for h in env("WORKER_HOSTS").split(",") if h.strip()]
+# The nodes from env are the starting point; a list set on the Nodes page replaces them (apply_nodes).
+ENV_HEAD = env("HEAD_HOST")
+ENV_WORKERS = [h.strip() for h in env("WORKER_HOSTS").split(",") if h.strip()]
+HEAD_HOST, WORKER_HOSTS = ENV_HEAD, list(ENV_WORKERS)
 SSH_USER = env("SSH_USER", "root")
 SSH_PORT = env("SSH_PORT", "22")
 CLUSTER_DIR = env("CLUSTER_DIR", "~/vllm-cluster")
@@ -86,8 +89,7 @@ SETTINGS_FILE = os.path.join(DATA, "settings.json")  # the model chosen in the a
 STATS_DB = os.path.join(DATA, "stats.db")  # token and energy use per hour
 EVENTS_FILE = os.path.join(DATA, "events.log")
 
-NODES = ([{"role": "head", "host": HEAD_HOST}] if HEAD_HOST else []) + \
-        [{"role": "worker", "host": h} for h in WORKER_HOSTS]
+NODES = []  # filled by apply_nodes(); changed in place, so every reader sees the current list
 
 PATCHSET_DIR = os.path.join(os.path.dirname(__file__), "patchsets")
 
@@ -131,6 +133,16 @@ def load_settings():
         return {}
 
 
+def apply_nodes():
+    """The nodes in effect: the list set on the Nodes page (settings.json), else env."""
+    global HEAD_HOST, WORKER_HOSTS
+    st = load_settings().get("nodes") or {}
+    HEAD_HOST = st.get("head") or ENV_HEAD
+    WORKER_HOSTS = list(st["workers"]) if "workers" in st else list(ENV_WORKERS)
+    NODES[:] = ([{"role": "head", "host": HEAD_HOST}] if HEAD_HOST else []) + \
+        [{"role": "worker", "host": h} for h in WORKER_HOSTS]
+
+
 def save_settings(update):
     """Merge into settings.json; a None value removes the key."""
     st = load_settings()
@@ -140,6 +152,9 @@ def save_settings(update):
     json.dump(st, open(tmp, "w"), indent=2)
     os.replace(tmp, SETTINGS_FILE)
     return st
+
+
+apply_nodes()
 
 
 def conv(t, v):
@@ -637,14 +652,15 @@ def setup_summary(nodes, running=()):
             "agent_version": AGENT_VERSION, "nodes": per,
             "pending": CONFIG_MODE == "managed" and (
                 applied is not None and any(applied.get(k, d) != v for k, v in applied_key(c).items()
-                                            for d in [{"executor": "ray", "env": {}}.get(k)])
+                                            for d in [{"executor": "ray", "env": {}, "nodes": v}.get(k)])
                 or bool(running) and bool(c["served_model_name"]) and c["served_model_name"] not in running),
             "model_ready": bool(c["model"]) and all((p["model"] or {}).get("present") for p in per)}
 
 
 def applied_key(c):
     """What decides the rendered config, to tell whether a restart is needed to apply it."""
-    return {k: c[k] for k in (*MODEL_KEYS, "patchset", "executor", "env")}
+    return {**{k: c[k] for k in (*MODEL_KEYS, "patchset", "executor", "env")},
+            "nodes": [n["host"] for n in NODES]}
 
 
 # ---------- usage statistics ----------
@@ -1303,6 +1319,51 @@ async def login(request: Request):
     return r
 
 
+IPV4 = re.compile(r"^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$")
+
+
+def cluster_running():
+    return any((n.get("container") or {}).get("running") for n in STATUS.get("nodes") or [])
+
+
+@app.post("/api/nodes", dependencies=[Depends(auth)])
+async def api_nodes(request: Request):
+    """Add a Spark, remove one, or change the head's address. The list replaces HEAD_HOST and
+    WORKER_HOSTS from env. Adding works while the cluster runs (it applies at the next Restart);
+    removing a node or moving the head needs a stopped cluster, so no container is left behind."""
+    b = await request.json()
+    action, host = b.get("action"), str(b.get("host") or "").strip()
+    if action not in ("add", "remove", "head") or not IPV4.match(host):
+        raise HTTPException(400, "give an IPv4 address, for example 192.168.100.2")
+    head, workers = HEAD_HOST, list(WORKER_HOSTS)
+    if action in ("remove", "head") and cluster_running():
+        raise HTTPException(409, "stop the cluster first, so no container is left running on a node the app no longer manages")
+    if action == "add":
+        if host == head or host in workers:
+            raise HTTPException(400, f"{host} is already in the cluster")
+        if not b.get("force"):
+            try:
+                socket.create_connection((host, int(SSH_PORT)), timeout=3).close()
+            except OSError:
+                raise HTTPException(422, f"nothing answers on {host}:{SSH_PORT}. Check the cable and that the new Spark has "
+                                         "this address on the cluster link, or add it anyway")
+        workers.append(host)
+    elif action == "remove":
+        if host not in workers:
+            raise HTTPException(400, f"{host} is not a worker here")
+        workers.remove(host)
+    else:
+        if host in workers:
+            raise HTTPException(400, f"{host} is a worker; remove it first")
+        head = host
+    save_settings({"nodes": {"head": head, "workers": workers}})
+    apply_nodes()
+    event({"add": f"node added: worker {host}. Install the agent on it, download the model, then Restart",
+           "remove": f"node removed: worker {host}",
+           "head": f"head address changed to {host}"}[action])
+    return {"ok": True, "head": HEAD_HOST, "workers": WORKER_HOSTS, "nodes": len(NODES)}
+
+
 @app.post("/api/credentials", dependencies=[Depends(auth)])
 async def api_credentials(request: Request):
     """The Hugging Face token, set from the page. It is checked against Hugging Face before it
@@ -1374,6 +1435,7 @@ def api_status(user: str = Depends(auth)):
     return {**STATUS, "action": dict(CURRENT_ACTION), "events": events(60),
             "config": {
                 "head": HEAD_HOST, "workers": WORKER_HOSTS, "ssh_user": SSH_USER,
+                "nodes_source": "page" if load_settings().get("nodes") else "env",
                 "cluster_dir": CLUSTER_DIR, "mode": CONFIG_MODE,
                 "served_model_name": cfg()["served_model_name"], "port": VLLM_PORT,
                 **{k: v for k, v in ops().items() if k != "locked"}, "ops_locked": ops()["locked"],

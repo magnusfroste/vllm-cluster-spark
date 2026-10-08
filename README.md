@@ -262,6 +262,20 @@ per kWh. The app reads vLLM's token counters and each node's GPU power every pol
 them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
 disks; set **Other power per node** under **Settings**, from a wall meter, to count the whole box.
 
+## Adding a Spark later
+
+Start with one Spark and add a second when you want the big models. **Nodes → Sparks in this
+cluster → Add a Spark** walks through it: connect the QSFP cable, give the new Spark a link
+address (the page shows the command with the next free address), install the agent on it, and
+add its address on the page. The app checks that the new Spark answers on SSH first. Then
+**Download model** fetches the model on it too, and **Restart** starts the model across both.
+
+Adding works while the cluster runs and applies at the next Restart. Removing a Spark or
+changing the head's address needs a stopped cluster. The list on the page replaces
+`HEAD_HOST`/`WORKER_HOSTS` from env. If the head was installed as a single Spark with its
+address on wifi or the LAN port, the page says so: give the head a link address as well and
+change its address on the page before adding the second.
+
 ## Changing the model or the config
 
 Pick another model in the app, download it, and press **Restart**. The page says
