@@ -75,7 +75,25 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
 .theme button:hover:not(:disabled) { color: var(--fg); }
 .theme button.on { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
 .theme svg { width: 15px; height: 15px; }
-.user { display: inline-flex; align-items: center; gap: 8px; padding-left: 6px; font-size: 13px; }
+.user { position: relative; padding-left: 4px; font-size: 13px; }
+.userbtn { display: inline-flex; align-items: center; gap: 8px; padding: 3px 8px 3px 3px; border-radius: 999px; border: 1px solid transparent;
+           background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; }
+.userbtn:hover:not(:disabled), .userbtn[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+.userbtn .chev { width: 14px; height: 14px; color: var(--muted); }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px; padding: 6px; z-index: 30; display: flex; flex-direction: column;
+        background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); }
+.menu[hidden] { display: none; }
+.menuhead { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menuhead small { display: block; margin-top: 2px; }
+.menu button, .menu a { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; box-shadow: none;
+                        color: var(--fg); font-size: 13px; font-weight: 500; }
+.menu button:hover, .menu a:hover { background: var(--hover); }
+.dlg { border: 1px solid var(--line); border-radius: 16px; padding: 24px; width: min(420px, calc(100vw - 32px));
+       background: var(--card); color: var(--fg); box-shadow: var(--shadow-lg); }
+.dlg::backdrop { background: rgba(10, 12, 18, .45); backdrop-filter: blur(2px); }
+.dlg h3 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.01em; }
+.dlg .field { margin-top: 10px; font-size: 13px; }
+.dlg .field input { margin-top: 4px; }
 .avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: 12px; font-weight: 700;
           color: #fff; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #ec4899)); }
 main { flex: 1; min-width: 0; width: 100%; max-width: 1680px; padding: 24px 28px 60px; }
@@ -284,8 +302,16 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
       <button data-theme-set="light" title="Theme: light" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
       <button data-theme-set="dark" title="Theme: dark" aria-label="Dark theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
     </div>
-    <div class="user"><span class="avatar" id="avatar" aria-hidden="true">·</span><span id="whoami">…</span>
-      <a class="iconbtn" href="logout" title="Log out" aria-label="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg></a></div>
+    <div class="user">
+      <button class="userbtn" id="userBtn" aria-haspopup="menu" aria-expanded="false" title="Your profile">
+        <span class="avatar" id="avatar" aria-hidden="true">·</span><span id="whoami">…</span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>
+      <div class="menu" id="userMenu" role="menu" hidden>
+        <div class="menuhead"><b id="menuUser"></b><small class="muted" id="pwState"></small></div>
+        <button role="menuitem" id="pwOpen">Change password…</button>
+        <a role="menuitem" href="logout">Log out</a>
+      </div>
+    </div>
   </header>
   <main>
   <div class="page" data-page="overview">
@@ -473,7 +499,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     <div id="ops" class="muted">Loading…</div>
   </section>
   <section class="card" id="credsCard">
-    <h2>Credentials</h2>
+    <h2>Hugging Face</h2>
     <div class="credgrid">
       <div>
         <b>Hugging Face token</b>
@@ -483,16 +509,6 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
         <small class="muted">A <b>read</b> token from <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>.
           The app checks it with Hugging Face before saving. Needed for gated models; for those, also accept the license on the model's page.</small>
         <div id="hfInfo" class="muted" style="margin-top:6px"></div>
-      </div>
-      <div>
-        <b>Admin password</b>
-        <div class="muted" id="pwState" style="margin:2px 0 8px">…</div>
-        <div class="row"><input type="password" id="pwCur" placeholder="Current password" autocomplete="current-password">
-          <input type="password" id="pwNew" placeholder="New password, 10+ characters" autocomplete="new-password">
-          <button id="pwSave">Change password</button></div>
-        <small class="muted">Logs out every other browser. Forgot it? Delete <code>credentials.json</code> in the app's data
-          directory (<code>~/vllmapp-data</code>) and log in with the password from the app's env again.</small>
-        <div id="pwInfo" class="muted" style="margin-top:6px"></div>
       </div>
     </div>
   </section>
@@ -507,6 +523,19 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   </div>
 </div>
 <div id="tip"></div>
+<dialog id="pwDialog" class="dlg">
+  <form method="dialog" id="pwForm">
+    <h3>Change password</h3>
+    <p class="muted" style="margin:0 0 12px">For the user <b id="pwUser"></b>. Every other browser is logged out; this one stays logged in.</p>
+    <label class="field">Current password<input type="password" id="pwCur" autocomplete="current-password" required></label>
+    <label class="field">New password, 10 characters or more<input type="password" id="pwNew" autocomplete="new-password" minlength="10" required></label>
+    <div id="pwInfo" class="muted" style="min-height:20px;margin-top:8px"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:6px">
+      <button value="cancel" formnovalidate>Cancel</button><button class="primary" id="pwSave" value="save">Change password</button></div>
+    <small class="muted" style="display:block;margin-top:12px">Forgot it? Delete <code>credentials.json</code> in the panel's data
+      directory (<code>~/vllmapp-data</code>) and log in with the password from the panel's env again.</small>
+  </form>
+</dialog>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -828,10 +857,10 @@ function renderSetup() {
   h += `<div class="${hf.set && hf.valid !== false ? "muted" : "warnbox"}" style="margin-top:10px">Hugging Face token: ${
     !hf.set ? `<b>not set</b>. Gated models (Llama, Gemma and others) can't be downloaded without one, and downloads are rate-limited.
       Create a <b>read</b> token at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
-      and paste it under <a href="#settings">Settings → Credentials</a>.`
-    : hf.valid === false ? `<b>rejected by Hugging Face</b> (revoked or mistyped). Save a new one under <a href="#settings">Settings → Credentials</a>.`
+      and paste it under <a href="#settings">Settings → Hugging Face</a>.`
+    : hf.valid === false ? `<b>rejected by Hugging Face</b> (revoked or mistyped). Save a new one under <a href="#settings">Settings → Hugging Face</a>.`
     : `set${hf.user ? `, account <b>${esc(hf.user)}</b>` : ""}. For a gated model, also accept its license on the model's page.
-      Change it under <a href="#settings">Settings → Credentials</a>.`}</div>`;
+      Change it under <a href="#settings">Settings → Hugging Face</a>.`}</div>`;
   $("#setup").innerHTML = (todo ? `<p style="margin:0 0 6px">${todo} thing(s) left before the cluster can start. Commands with <code>sudo</code> run on the node itself; everything else the app does.</p>`
     : st.model_ready || !st.model ? `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`
     : `<p style="margin:0 0 6px">The nodes are ready. ${st.nodes.some(n => n.downloading) ? "The model is downloading." : "Next: download the model."}</p>`) + h;
@@ -921,7 +950,7 @@ function renderGuide(todo) {
     {t: "Offer it on GarageAI", req: false, done: false, later: !c.healthy,
      d: "Optional: sell this cluster's inference on garageai.eu.", a: B("Open", "location.hash='#garageai'")},
     {t: "Set your own admin password", req: false, done: cfg.password_source === "settings",
-     d: cfg.password_source === "settings" ? "Done." : "The one from the install works; you may want your own.", a: cfg.password_source === "settings" ? "" : B("Change", "go('#credsCard')")},
+     d: cfg.password_source === "settings" ? "Done." : "The one from the install works; you may want your own.", a: cfg.password_source === "settings" ? "" : B("Change", "openPassword()")},
   ];
   const req = steps.filter(x => x.req), doneReq = req.filter(x => x.done).length;
   const first = steps.findIndex(x => x.req && !x.done);
@@ -1167,8 +1196,8 @@ function renderCreds() {
   const lockHf = !!hf.locked;
   $("#hfTok").disabled = $("#hfSave").disabled = lockHf;
   if (lockHf) $("#hfInfo").innerHTML = `Set as <code>HF_TOKEN</code> in the app's env, which wins. Change it in ${esc(hf.where)}.`;
-  $("#pwState").textContent = cfg.password_source === "settings" ? "Set here under Settings."
-    : "From the app's env (ADMIN_PASSWORD). Changing it here replaces that one.";
+  $("#pwState").textContent = cfg.password_source === "settings" ? "Password set in the panel" : "Password from the install (env)";
+  $("#menuUser").textContent = $("#pwUser").textContent = cfg.user || "";
 }
 $("#hfSave").onclick = async () => {
   const v = $("#hfTok").value.trim();
@@ -1183,15 +1212,27 @@ $("#hfSave").onclick = async () => {
     await refresh();
   } finally { $("#hfSave").disabled = false; }
 };
-$("#pwSave").onclick = async () => {
+// ---------- profile menu (top right): change password, log out ----------
+function userMenu(open) { $("#userMenu").hidden = !open; $("#userBtn").setAttribute("aria-expanded", String(open)); }
+$("#userBtn").onclick = e => { e.stopPropagation(); userMenu($("#userMenu").hidden); };
+document.addEventListener("click", e => { if (!e.target.closest(".user")) userMenu(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") userMenu(false); });
+function openPassword() {
+  userMenu(false); $("#pwCur").value = $("#pwNew").value = ""; $("#pwInfo").textContent = "";
+  $("#pwDialog").showModal(); $("#pwCur").focus();
+}
+$("#pwOpen").onclick = openPassword;
+$("#pwForm").addEventListener("submit", async e => {
+  if (e.submitter?.value !== "save") return;  // Cancel just closes the dialog
+  e.preventDefault();
   const r = await fetch("api/password", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({current: $("#pwCur").value, new: $("#pwNew").value})});
   const d = await r.json();
   if (!r.ok) { $("#pwInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
-  $("#pwCur").value = $("#pwNew").value = "";
   $("#pwInfo").innerHTML = `<span style="color:var(--ok)">Changed. Other browsers are logged out; this one stays logged in.</span>`;
   await refresh();
-};
+  setTimeout(() => $("#pwDialog").close(), 1400);
+});
 
 function renderOps() {
   const cfg = S.config, lock = cfg.ops_locked || [];
