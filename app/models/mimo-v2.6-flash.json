@@ -10,11 +10,14 @@
   "gpu_mem_util": "0.83",
   "max_model_len": "524288",
   "vllm_args": "--trust-remote-code --reasoning-parser mimo --tool-call-parser mimo --enable-auto-tool-choice --generation-config vllm --moe-backend marlin --no-async-scheduling --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Verified on 2 \u00d7 DGX Spark 2026-10-05: correct answers in English and Swedish, tool calls work, ~25 tok/s for one stream, 791k tokens of KV cache at 512k context (1.51x; 776k and 2.96x at 256k). The model supports 1M, but the KV cache does not fit a full 1M request. Xiaomi's MoE, 309B total / 15B active. Runs on vLLM's official MiMo image (vLLM 0.29.1), which has no Ray, so the nodes join with vLLM's own multi-node mode; the head also keeps more free memory that way. DeepGEMM is off and the MoE uses Marlin: on GB10 the defaults give nonsense. Recommended sampling: temperature 1.0, top_p 0.95.",
+  "notes": "Verified on 2 × DGX Spark 2026-10-05: correct answers in English and Swedish, tool calls work, ~25 tok/s for one stream, 791k tokens of KV cache at 512k context (1.51x; 776k and 2.96x at 256k). The model supports 1M, but the KV cache does not fit a full 1M request. Xiaomi's MoE, 309B total / 15B active. Runs on vLLM's official MiMo image (vLLM 0.29.1), which has no Ray, so the nodes join with vLLM's own multi-node mode; the head also keeps more free memory that way. DeepGEMM is off and the MoE uses Marlin: on GB10 the defaults give nonsense. Recommended sampling: temperature 1.0, top_p 0.95.",
   "image": "vllm/vllm-openai@sha256:3a535c2156286dd4d535a6b84220126fb72f88e5c84979ec631fa753f007a179",
   "patchset": "none",
   "executor": "mp",
   "env": {
     "VLLM_USE_DEEP_GEMM": "0"
-  }
+  },
+  "recommended_for": [
+    2
+  ]
 }

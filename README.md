@@ -44,7 +44,12 @@ parallelism (over Ray or vLLM's own multi-node mode). The panel runs on the head
 controls every node over SSH, through a small agent that can only run an allowlist of
 commands.
 
-Once the app is deployed, everything happens from its pages, with a menu on the left:
+Once the app is deployed, everything happens from its pages, with a menu on the left. The first
+time, **Overview** shows a **Get started** checklist with the whole path: reach the Sparks, the
+setup checks, the Hugging Face token, a model (the catalog's recommended one for your number of
+Sparks, one click), download, start, a test question with a checkable answer, then connecting
+apps and, optionally, GarageAI. Each step has its button, and the list ticks itself off from
+what the app sees. Hide it when you're done; a link at the bottom of Overview brings it back.
 
 | | Page | What it does |
 |---|---|---|

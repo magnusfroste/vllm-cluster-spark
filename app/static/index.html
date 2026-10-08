@@ -222,6 +222,24 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .sparkrow:first-child { border-top: 0; }
 .sparkrow .dot { width: 10px; height: 10px; }
 ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 0; }
+.guide { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.guidehead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.gprog { height: 6px; border-radius: 999px; background: var(--hover); margin: 12px 0 6px; overflow: hidden; }
+.gprog i { display: block; height: 100%; border-radius: 999px; transition: width .4s;
+           background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #22d3ee)); }
+.gsteps { list-style: none; margin: 0; padding: 0; }
+.gsteps li { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: center; padding: 10px 0;
+             border-top: 1px solid var(--line); }
+.gsteps li:first-child { border-top: 0; }
+.gnum { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 700;
+        border: 1.5px solid var(--line); color: var(--muted); }
+.gsteps li.done .gnum { background: var(--ok); border-color: var(--ok); color: #fff; }
+.gsteps li.now .gnum { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent); }
+.gsteps li.done b { color: var(--muted); font-weight: 500; }
+.gsteps li.later { opacity: .6; }
+.gsteps small { display: block; color: var(--muted); }
+.gsteps .gact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+#guideShow { margin-top: 4px; }
 .credgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 32px; }
 .credgrid > div > b { font-size: 15px; }
 .credgrid input[type=password] { flex: 1; min-width: 180px; }
@@ -272,6 +290,12 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   <main>
   <div class="page" data-page="overview">
     <div class="pagehead"><h1>Overview</h1><span class="muted">Status, next step and control</span></div>
+  <section class="card guide" id="guideCard" style="display:none">
+    <div class="guidehead"><div><h2 style="margin:0">Get started</h2><div class="muted" id="guideSum"></div></div>
+      <button class="small" id="guideHide">Hide guide</button></div>
+    <div class="gprog"><i id="guideBar"></i></div>
+    <ol class="gsteps" id="guideSteps"></ol>
+  </section>
   <section class="card">
     <div class="hero">
       <div class="dot" id="dot"></div>
@@ -292,6 +316,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     <section class="card tilecard"><h2>Latest events <a href="#events">Events →</a></h2><div id="dEvents" class="muted">…</div></section>
   </div>
 
+  <a href="#overview" id="guideShow" style="display:none">Show the getting-started guide</a>
   <section class="card" id="controlCard">
     <h2>Control</h2>
     <div class="btns">
@@ -706,6 +731,7 @@ function render() {
   nb("models", S.setup?.nodes?.some(n => n.downloading) ? "↓" : S.setup?.pending ? "1" : "", "info");
   nb("overview", c.hung ? "!" : "", "err");
   renderNext(todo);
+  renderGuide(todo);
   renderUse();
   renderDash();
   renderDisk();
@@ -846,6 +872,89 @@ function renderNext(todo) {
   else { step = "Step 4 of 4"; text = `Start the cluster with ${name}.`; btn = `<button class="primary" onclick="act('start')">Start</button>`; }
   $("#next").innerHTML = `<div style="flex:1;min-width:220px"><div class="step">${esc(step)}</div><b>${esc(text)}</b></div>${btn}`;
 }
+// ---------- getting-started guide: the whole path, one line per step, from what the app already knows ----------
+let guideAnswer = "", guideTodo = 0;
+function renderGuide(todo) {
+  guideTodo = todo;
+  const c = S.cluster || {}, st = S.setup || {}, cfg = S.config || {}, g = cfg.guide || {};
+  const hidden = !!g.hidden;
+  $("#guideCard").style.display = hidden ? "none" : "";
+  $("#guideShow").style.display = hidden ? "" : "none";
+  $("#next").style.display = hidden ? "" : "none";  // the guide shows the next step itself
+  if (hidden) return;
+  const nodes = st.nodes || [], n = nodes.length, busy = !!S.action?.name;
+  const reach = n && nodes.every(x => x.reachable && !x.agent_old);
+  const cat = M?.catalog || [];
+  // Only a model the catalog marks as the start for this many Sparks (recommended_for) is suggested.
+  const rec = cat.find(m => (m.recommended_for || []).includes(n));
+  const cur = M?.current || {}, name = cur.entry?.name || st.model || "the model";
+  const dl = nodes.filter(x => x.downloading);
+  const pct = dl.length && st.size ? Math.floor(100 * Math.min(...dl.map(x => x.model?.bytes || 0)) / st.size) : null;
+  const B = (label, js, primary) => `<button class="small ${primary ? "primary" : ""}" ${busy ? "disabled" : ""} onclick="${js}">${label}</button>`;
+  const steps = [
+    {t: `Reach your ${n === 1 ? "Spark" : n + " Sparks"}`, req: true, done: reach,
+     d: reach ? nodes.map(x => x.host).join(" · ") : "Install the agent on every node, so the app can manage it.",
+     a: B("Open Nodes", "go('#setupCard')", !reach)},
+    {t: "Fix the setup checks", req: true, done: reach && !todo,
+     d: todo ? `${todo} thing(s) left; the page shows the command for each.` : "Docker, GPU support, disk and network are in place.",
+     a: todo ? B("Show what", "go('#setupCard')", true) : ""},
+    {t: "Add your Hugging Face token", req: false, done: st.hf?.set && st.hf?.valid !== false,
+     d: st.hf?.set ? `Account ${esc(st.hf.user || "")}.` : "Recommended: needed for gated models, and downloads go faster.",
+     a: st.hf?.set ? "" : B("Add token", "go('#credsCard')")},
+    {t: "Pick a model", req: true, done: !st.no_model,
+     d: !st.no_model ? esc(name) : rec ? `Recommended for ${n === 1 ? "one Spark" : n + " Sparks"}: ${esc(rec.name)}.`
+        : `Choose one in the library; the verified ones are tested on ${n === 1 ? "one Spark" : n + " Sparks"} or more.`,
+     a: st.no_model ? (rec ? B("Use " + esc(rec.name.split(" (")[0]), `guidePick('${esc(rec.id)}')`, true) : "") + B("Browse models", "location.hash='#models'") : ""},
+    {t: "Download it to every Spark", req: true, done: !!st.model_ready,
+     d: st.model_ready ? "On disk on every node." : dl.length ? `Downloading${pct != null ? `: ${pct} %` : "…"} It continues if you close the page.`
+        : st.size ? `${(st.size / 1e9).toFixed(1)} GB per node.` : "",
+     a: !st.model_ready && !dl.length && !st.no_model ? B("Download", "act('download')", true) : ""},
+    {t: "Start it", req: true, done: !!c.healthy && !st.pending,
+     d: c.healthy ? (st.pending ? "Running an older choice: restart to switch." : `Responding${c.vllm_version ? " · vLLM " + esc(c.vllm_version.replace(/\+.*/, "")) : ""}.`)
+        : c.state === "starting" ? `Starting: ${esc(c.phase || "…")}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""}. Usually 2–20 minutes, depending on the model.` : "",
+     a: st.model_ready && !c.healthy && c.state !== "starting" ? B("Start", "act('start')", true) : c.healthy && st.pending ? B("Restart", "act('restart')", true) : ""},
+    {t: "Ask it a test question", req: true, done: !!g.tested,
+     d: guideAnswer || (g.tested ? "It answered." : "Checks that the answers make sense, not just that text comes out."),
+     a: c.healthy ? B(g.tested ? "Ask again" : "Ask", "guideTest()", !g.tested) : ""},
+    {t: "Connect your apps", req: false, done: false, later: !c.healthy,
+     d: "The API address, the key and examples for curl, Python and OpenCode.", a: B("Show how", "location.hash='#api'")},
+    {t: "Offer it on GarageAI", req: false, done: false, later: !c.healthy,
+     d: "Optional: sell this cluster's inference on garageai.eu.", a: B("Open", "location.hash='#garageai'")},
+    {t: "Set your own admin password", req: false, done: cfg.password_source === "settings",
+     d: cfg.password_source === "settings" ? "Done." : "The one from the install works; you may want your own.", a: cfg.password_source === "settings" ? "" : B("Change", "go('#credsCard')")},
+  ];
+  const req = steps.filter(x => x.req), doneReq = req.filter(x => x.done).length;
+  const first = steps.findIndex(x => x.req && !x.done);
+  $("#guideSteps").innerHTML = steps.map((x, i) => `<li class="${x.done ? "done" : i === first ? "now" : x.later ? "later" : ""}">
+      <span class="gnum">${x.done ? "✓" : i + 1}</span>
+      <span><b>${x.t}</b>${x.req ? "" : ` <span class="muted" style="font-size:12px">optional</span>`}<small>${x.d || ""}</small></span>
+      <span class="gact">${x.done && !x.a?.includes("Ask") ? "" : x.a || ""}</span></li>`).join("");
+  $("#guideBar").style.width = `${Math.round(100 * doneReq / req.length)}%`;
+  $("#guideSum").textContent = doneReq === req.length ? "All set: the model runs and answers. Hide this guide when you're done with the optional steps."
+    : `${doneReq} of ${req.length} steps done.`;
+}
+async function guideHidden(h) {
+  await fetch("api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({guide: {hidden: h}})});
+  await refresh();
+}
+$("#guideHide").onclick = () => guideHidden(true);
+$("#guideShow").onclick = e => { e.preventDefault(); guideHidden(false); };
+async function guidePick(id) {
+  const r = await fetch("api/model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id})});
+  if (!r.ok) return alert((await r.json()).detail || r.status);
+  await loadModels(); await refresh();
+}
+async function guideTest() {
+  guideAnswer = "Asking: What is the capital of Sweden, and what is 17*23?…"; renderGuide(0);
+  try {
+    const d = await (await fetch("api/test", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt: "What is the capital of Sweden, and what is 17*23? Answer in one short sentence."})})).json();
+    guideAnswer = d.ok ? `Answer in ${d.seconds} s: “${esc((d.answer || "").trim().slice(0, 160))}”. Stockholm and 391 are right.`
+      : `<span style="color:var(--err)">No answer: ${esc(d.error || "")}</span>`;
+  } catch (e) { guideAnswer = `<span style="color:var(--err)">${esc(String(e))}</span>`; }
+  await refresh();
+}
+
 function go(sel) {
   const el = document.querySelector(sel), pg = el.closest("[data-page]").dataset.page;
   if (location.hash !== "#" + pg) location.hash = "#" + pg;
@@ -1214,6 +1323,7 @@ async function loadModels() {
   pick = M.settings.id || M.current.id
     || M.catalog.find(m => (S?.cluster?.models || []).includes(m.served_model_name))?.id || null;
   drawModels();
+  if (S) renderGuide(guideTodo);  // the guide's recommendation needs the catalog
 }
 function drawModels(headOnly) {
   const cur = M.current, running = S?.cluster?.models || [];

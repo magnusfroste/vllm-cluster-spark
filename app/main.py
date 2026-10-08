@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.14.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.15.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1459,6 +1459,7 @@ def api_status(user: str = Depends(auth)):
                 "served_model_name": cfg()["served_model_name"], "port": VLLM_PORT,
                 **{k: v for k, v in ops().items() if k != "locked"}, "ops_locked": ops()["locked"],
                 "public_url": load_settings().get("public_url", ""),
+                "guide": load_settings().get("guide") or {},
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "state": load_state(),
                 "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE,
@@ -1580,6 +1581,8 @@ async def api_settings(request: Request):
         if u and not re.match(r"^https?://[A-Za-z0-9.:/_-]+$", u):
             raise HTTPException(400, "the public URL must start with http:// or https://")
         upd["public_url"] = u or None
+    if "guide" in b:  # the getting-started guide on Overview: hidden or not
+        upd["guide"] = {**(load_settings().get("guide") or {}), "hidden": bool((b["guide"] or {}).get("hidden"))}
     if "ops" in b:
         saved = dict(load_settings().get("ops", {}))
         for k, v in (b["ops"] or {}).items():
@@ -1595,7 +1598,8 @@ async def api_settings(request: Request):
         upd["ops"] = saved
     save_settings(upd)
     event("settings changed: " + ", ".join(
-        [f"{k}={v}" for k, v in (b.get("ops") or {}).items()] + (["public URL"] if "public_url" in b else [])))
+        [f"{k}={v}" for k, v in (b.get("ops") or {}).items()] + (["public URL"] if "public_url" in b else [])
+        + (["getting-started guide " + ("hidden" if upd["guide"]["hidden"] else "shown")] if "guide" in b else [])))
     return {"ok": True, "ops": ops()}
 
 
@@ -1644,6 +1648,8 @@ async def api_test(request: Request):
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": redact(str(e))}, 502)
     msg = d["choices"][0]["message"]
+    if not (load_settings().get("guide") or {}).get("tested"):
+        save_settings({"guide": {**(load_settings().get("guide") or {}), "tested": True}})
     return {"ok": True, "seconds": round(now() - t0, 2), "answer": msg.get("content"),
             "reasoning": (msg.get("reasoning_content") or msg.get("reasoning") or "")[:4000],
             "usage": d.get("usage")}
