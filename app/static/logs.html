@@ -8,15 +8,15 @@
 <script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
 :root {
-  --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
-  --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --accent: #0969da; --code: #f0f2f5;
+  --bg: #f5f6f8; --card: #fff; --fg: #111827; --muted: #6b7280; --line: #e7e9ee;
+  --ok: #15803d; --warn: #b45309; --err: #dc2626; --accent: #5b5bd6; --code: #f3f4f7;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
-          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14; }
+  :root:not([data-theme="light"]) { --bg: #0b0d12; --card: #12151c; --fg: #e5e7eb; --muted: #8b93a3; --line: #232835;
+          --ok: #34d399; --warn: #fbbf24; --err: #f87171; --accent: #8b8cf8; --code: #0d1016; }
 }
-:root[data-theme="dark"] { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e; --line: #2a313a;
-          --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #4493f8; --code: #0b0f14; }
+:root[data-theme="dark"] { --bg: #0b0d12; --card: #12151c; --fg: #e5e7eb; --muted: #8b93a3; --line: #232835;
+          --ok: #34d399; --warn: #fbbf24; --err: #f87171; --accent: #8b8cf8; --code: #0d1016; }
 :root { color-scheme: light dark; } :root[data-theme="light"] { color-scheme: light; } :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }

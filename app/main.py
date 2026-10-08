@@ -34,7 +34,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.9.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.10.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1160,23 +1160,25 @@ LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <script>try { const t = localStorage.getItem("vllmapp-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
-:root { --bg: #f6f7f9; --card: #fff; --fg: #1b1f24; --muted: #6a737d; --line: #e3e6ea; --accent: #0969da; --err: #cf222e; }
+:root { --bg: #f5f6f8; --card: #fff; --fg: #111827; --muted: #6b7280; --line: #e7e9ee; --accent: #5b5bd6; --err: #dc2626; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
-  --line: #2a313a; --accent: #4493f8; --err: #f85149; }
+  :root:not([data-theme="light"]) { --bg: #0b0d12; --card: #12151c; --fg: #e5e7eb; --muted: #8b93a3;
+  --line: #232835; --accent: #8b8cf8; --err: #f87171; }
 }
-:root[data-theme="dark"] { --bg: #0e1116; --card: #161b22; --fg: #e6edf3; --muted: #8b949e;
-  --line: #2a313a; --accent: #4493f8; --err: #f85149; }
+:root[data-theme="dark"] { --bg: #0b0d12; --card: #12151c; --fg: #e5e7eb; --muted: #8b93a3;
+  --line: #232835; --accent: #8b8cf8; --err: #f87171; }
 :root { color-scheme: light dark; } :root[data-theme="light"] { color-scheme: light; } :root[data-theme="dark"] { color-scheme: dark; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 Inter, "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased;
        display: grid; place-items: center; min-height: 100vh; }
-form { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 22px; width: min(320px, calc(100vw - 32px)); }
-h1 { font-size: 18px; margin: 0 0 14px; }
+form { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; width: min(340px, calc(100vw - 32px));
+       box-shadow: 0 10px 30px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05); }
+h1 { font-size: 20px; letter-spacing: -.02em; margin: 0 0 16px; }
 label { display: block; font-size: 12px; color: var(--muted); margin-top: 10px; }
-input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line);
+input { width: 100%; box-sizing: border-box; font: inherit; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--line);
         background: var(--bg); color: var(--fg); margin-top: 3px; }
-button { margin-top: 16px; width: 100%; font: inherit; padding: 8px; border-radius: 7px; border: 1px solid var(--accent);
+button { margin-top: 16px; width: 100%; font: inherit; padding: 9px; border-radius: 9px; font-weight: 600; border: 1px solid var(--accent);
          background: var(--accent); color: #fff; cursor: pointer; }
+input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .err { color: var(--err); margin-top: 10px; }
 </style></head><body>
 <form method="post" action="login"><h1>vLLM cluster</h1>
