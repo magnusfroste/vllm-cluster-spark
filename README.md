@@ -1,18 +1,48 @@
 # vLLM Cluster Spark
 
-**Private AI on your own NVIDIA DGX Spark cluster — with a control plane you'd expect from a cloud.**
+**vllmapp: an easy-setup panel to run, administer and monitor vLLM on your own NVIDIA DGX Spark — one box or a cluster.**
 
-Two DGX Sparks can serve models no single box can hold, but getting there means Ray, RoCE, NCCL,
-per-node configs and a lot of SSH. This app turns that into one web page, inspired by Easypanel:
-set the cluster up, start it, watch it and fix it — and see what it costs to run, down to GPU
-temperature, power draw and tokens per kWh on every node. Your prompts never leave your hardware.
+One Spark serves the models that fit in its memory; two Sparks serve models no single box can
+hold. Getting there by hand means vLLM images, Ray or multi-node flags, RoCE, NCCL, per-node
+configs and a lot of SSH. vllmapp turns that into one web page: pick a model from the library,
+download it, start it, and watch it — load, tokens, GPU temperature, power draw and tokens per
+kWh on every node. Your prompts never leave your hardware.
+
+## Quick start
+
+On the head node (the one that serves the API), as your normal user:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/magnusfroste/vllm-cluster-spark/main/install.sh -o install.sh
+```
+```bash
+bash install.sh
+```
+
+The script asks for the nodes' addresses (it suggests them) and a Hugging Face token, creates
+the admin password and the API key, and starts the panel at `http://<head-ip>:8090`. From there
+the panel walks you through the rest: the agent on each node, the setup checks, the model.
+
+**Supported out of the box:** DGX Spark and the OEM GB10 units on DGX OS, which ships Docker
+and the NVIDIA Container Toolkit; if Docker is missing, the script offers to install it.
+Tested on ASUS Ascent GX10 (DGX OS 7.4). No Easypanel, reverse proxy or domain is needed, and
+if you already run [Easypanel](https://easypanel.io), the app deploys there too
+([step 1b](#b-in-easypanel)).
+
+| Verified models | Sparks | Notes |
+|---|---|---|
+| Qwen3.8-27B Heretic (NVFP4 W4A16) | 2 (fits on 1) | ~22 tok/s, 256k context. Verified across two Sparks; the one-Spark run is next |
+| MiMo-V2.6-Flash-RL (FP8) | 2 | ~25 tok/s, 512k context |
+| GLM-5.3-Flash (NVFP4) | 2 | 128k context |
+
+The library has more models marked *untested*, and any Hugging Face repo vLLM supports.
 
 ## What it does
 
 Runs a vLLM model on one NVIDIA DGX Spark (GB10), or across two or more with tensor
-parallelism (over Ray or vLLM's own multi-node mode), and gives you one web page to set it up, start it, watch it and fix it. The app runs
-on the head node, either straight from a one-line install script or in
-[Easypanel](https://easypanel.io), and controls every node over SSH.
+parallelism (over Ray or vLLM's own multi-node mode). The panel runs on the head node and
+controls every node over SSH, through a small agent that can only run an allowlist of
+commands.
 
 Once the app is deployed, everything happens from its pages, with a menu on the left:
 
