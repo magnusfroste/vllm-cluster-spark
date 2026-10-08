@@ -34,7 +34,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.11.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.12.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -54,7 +54,7 @@ VLLM_PORT = env("VLLM_PORT", "8000")
 
 TP_SIZE = env("TP_SIZE")
 API_KEY = env("API_KEY")
-HF_TOKEN = env("HF_TOKEN")
+HF_TOKEN = env("HF_TOKEN")  # set in env it wins; otherwise the token saved under Settings is used
 HF_CACHE_DIR = env("HF_CACHE_DIR", "${HOME}/.cache/huggingface")
 EXTRA_MOUNTS = [m.strip() for m in env("EXTRA_MOUNTS").split(",") if m.strip()]
 IF_NAMES = env("IF_NAMES")  # optional override, ;-separated in node order
@@ -193,13 +193,62 @@ def cfg():
         c["image"] = next((m["image"] for m in CATALOG.values() if m.get("status") == "verified"), "")
     return c
 
-SECRETS = [s for s in (API_KEY, HF_TOKEN, ADMIN_PASSWORD) if len(s) >= 6]
+# ---------- credentials set in the app (Settings), kept in /data/credentials.json (0600) ----------
+CREDS_FILE = os.path.join(DATA, "credentials.json")
+
+
+def load_creds():
+    try:
+        return json.load(open(CREDS_FILE))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_creds(update):
+    c = {**load_creds(), **update}
+    c = {k: v for k, v in c.items() if v}
+    tmp = CREDS_FILE + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(c, f)
+    os.replace(tmp, CREDS_FILE)
+
+
+def hf_token():
+    return HF_TOKEN or load_creds().get("hf_token", "")
+
+
+def hash_password(pw, salt=None, rounds=310000):
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), rounds).hex()
+    return f"pbkdf2_sha256${rounds}${salt}${dk}"
+
+
+def password_hash():
+    """The admin password set under Settings. It replaces ADMIN_PASSWORD from env; deleting
+    /data/credentials.json makes the env password work again (the way back from a lost one)."""
+    return load_creds().get("admin_password", "")
+
+
+def password_ok(pw):
+    h = password_hash()
+    if h:
+        try:
+            _, rounds, salt, dk = h.split("$")
+            return secrets.compare_digest(hash_password(pw, salt, int(rounds)).split("$")[3], dk)
+        except ValueError:
+            return False
+    return bool(ADMIN_PASSWORD) and secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode())
+
+
+def secret_values():
+    return [s for s in (API_KEY, hf_token(), ADMIN_PASSWORD) if len(s) >= 6]
 
 
 def redact(text):
     if not text:
         return text
-    for s in SECRETS:
+    for s in secret_values():
         text = text.replace(s, "***")
     text = re.sub(r"('api_key': \[)'[^']*'", r"\1'***'", text)
     text = re.sub(r"(--api-key[ =])(?![\"']?\$)\S+", r"\1***", text)
@@ -517,19 +566,21 @@ _hf = {"ts": 0, "info": None}
 
 
 def hf_status():
-    """Whether HF_TOKEN is set and which account it belongs to (checked once an hour)."""
-    if not HF_TOKEN:
-        return {"set": False, "where": ENV_WHERE}
-    if now() - _hf["ts"] > 3600 or _hf["info"] is None:
-        _hf["ts"] = now()
+    """Whether a Hugging Face token is set and which account it belongs to (checked once an hour)."""
+    tok = hf_token()
+    base = {"where": ENV_WHERE, "locked": bool(HF_TOKEN)}
+    if not tok:
+        return {"set": False, **base}
+    if now() - _hf["ts"] > 3600 or _hf["info"] is None or _hf.get("tok") != tok:
+        _hf["ts"], _hf["tok"] = now(), tok
         code, body = http_get("https://huggingface.co/api/whoami-v2",
-                              {"Authorization": f"Bearer {HF_TOKEN}"}, timeout=10)
+                              {"Authorization": f"Bearer {tok}"}, timeout=10)
         try:
             _hf["info"] = {"valid": True, "user": json.loads(body).get("name")} if code == 200 \
                 else {"valid": False if code == 401 else None}
         except ValueError:
             _hf["info"] = {"valid": None}
-    return {"set": True, "where": ENV_WHERE, **_hf["info"]}
+    return {"set": True, **base, **_hf["info"]}
 
 
 
@@ -542,7 +593,7 @@ def model_size():
     size, checked = _model_size.get(key), _model_size.get(("ts",) + key, 0)
     if size is None and now() - checked > 600:  # a failed lookup is retried every 10 min
         _model_size[("ts",) + key] = now()
-        hdr = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+        hdr = {"Authorization": f"Bearer {hf_token()}"} if hf_token() else {}
         code, body = http_get(f"https://huggingface.co/api/models/{c['model']}/revision/"
                               f"{c['revision'] or 'main'}?blobs=true", hdr, timeout=15)
         try:
@@ -902,7 +953,7 @@ def do_download():
     cmd = f"download {shlex.quote(c['image'])} {c['model']} {shlex.quote(HF_CACHE_DIR)} {c['revision']}".rstrip()
 
     def one(n):
-        rc, res, err = ssh(n["host"], cmd, timeout=3600, input=HF_TOKEN)
+        rc, res, err = ssh(n["host"], cmd, timeout=3600, input=hf_token())
         good = rc == 0 and res and res.get("rc") == 0
         event(f"{n['role']} {n['host']}: download "
               + ("started" if good else f"FAILED ({redact(str((res or {}).get('out') or err))[-300:]})"),
@@ -1089,7 +1140,7 @@ def render(i, n, c=None):
         f"MODEL={c['model']}",
         f"VLLM_EXTRA_ARGS={vllm_args(c)}",
         f"VLLM_API_KEY={API_KEY}",
-        f"HF_TOKEN={HF_TOKEN}",
+        f"HF_TOKEN={hf_token()}",
     ] + [f"{k}={v}" for k, v in c["env"].items()]) + "\n"
     mounts = [m if m.count(":") >= 2 else m + ":ro" for m in EXTRA_MOUNTS]
     files = {".env": envfile}
@@ -1134,7 +1185,7 @@ def session_secret():
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(secrets.token_hex(32))
-    return hashlib.sha256((open(path).read().strip() + ADMIN_USER + ADMIN_PASSWORD).encode()).digest()
+    return hashlib.sha256((open(path).read().strip() + ADMIN_USER + (password_hash() or ADMIN_PASSWORD)).encode()).digest()
 
 
 def make_session(user):
@@ -1153,15 +1204,14 @@ def session_user(cookie):
 
 
 def check_password(user, password):
-    return secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and \
-        secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
+    return secrets.compare_digest(user.encode(), ADMIN_USER.encode()) and password_ok(password)
 
 
 def auth(request: Request):
     """A login cookie, or Basic auth for scripts (decoded as UTF-8, since FastAPI's HTTPBasic
     decodes ASCII and non-ASCII passwords always failed). Pages without either go to /login;
     API calls get a plain 401, so the browser shows no password dialog."""
-    if not ADMIN_PASSWORD:
+    if not (ADMIN_PASSWORD or password_hash()):
         raise HTTPException(503, "ADMIN_PASSWORD is not set — set it in the app's env (Easypanel's env tab or ~/vllmapp/.env)")
     user = session_user(request.cookies.get(SESSION_COOKIE))
     if user:
@@ -1243,10 +1293,53 @@ async def login(request: Request):
     _login_fails[:] = [t for t in _login_fails if now() - t < 300]
     if len(_login_fails) >= 10:  # slow down guessing: at most 10 wrong passwords per 5 minutes
         return HTMLResponse(login_page(user, nxt, "Too many attempts. Wait a few minutes."), 429)
-    if not ADMIN_PASSWORD or not check_password(user, password):
+    if not check_password(user, password):
         _login_fails.append(now())
         return HTMLResponse(login_page(user, nxt, "Wrong user or password."), 401)
     r = RedirectResponse("." + nxt, 303)
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    r.set_cookie(SESSION_COOKIE, make_session(user), max_age=SESSION_DAYS * 86400,
+                 httponly=True, samesite="lax", secure=https)
+    return r
+
+
+@app.post("/api/credentials", dependencies=[Depends(auth)])
+async def api_credentials(request: Request):
+    """The Hugging Face token, set from the page. It is checked against Hugging Face before it
+    is saved; an empty value removes it. HF_TOKEN in env wins and can't be changed here."""
+    b = await request.json()
+    tok = str(b.get("hf_token") or "").strip()
+    if HF_TOKEN:
+        raise HTTPException(409, f"HF_TOKEN is set in the app's env, which wins. Change it in {ENV_WHERE}.")
+    if tok:
+        if not re.match(r"^hf_[A-Za-z0-9]{20,}$", tok):
+            raise HTTPException(400, "that does not look like a Hugging Face token (they start with hf_)")
+        code, _ = http_get("https://huggingface.co/api/whoami-v2", {"Authorization": f"Bearer {tok}"}, timeout=15)
+        if code == 401:
+            raise HTTPException(400, "Hugging Face rejected the token. Copy it again from huggingface.co/settings/tokens")
+        if code != 200:
+            raise HTTPException(502, f"could not check the token with Hugging Face (HTTP {code or 'no answer'}); try again")
+    save_creds({"hf_token": tok})
+    _hf["info"] = None
+    event("Hugging Face token " + ("saved" if tok else "removed") + " under Settings")
+    return {"ok": True, "hf": hf_status()}
+
+
+@app.post("/api/password")
+async def api_password(request: Request, user: str = Depends(auth)):
+    """Change the admin password. Everyone else is logged out; this browser stays logged in."""
+    b = await request.json()
+    cur, new = str(b.get("current") or ""), str(b.get("new") or "")
+    if not password_ok(cur):
+        _login_fails.append(now())
+        raise HTTPException(403, "the current password is wrong")
+    if len(new) < 10:
+        raise HTTPException(400, "the new password needs at least 10 characters")
+    if new == cur:
+        raise HTTPException(400, "the new password is the same as the current one")
+    save_creds({"admin_password": hash_password(new)})
+    event("admin password changed under Settings; other sessions are logged out")
+    r = JSONResponse({"ok": True})
     https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
     r.set_cookie(SESSION_COOKIE, make_session(user), max_age=SESSION_DAYS * 86400,
                  httponly=True, samesite="lax", secure=https)
@@ -1288,7 +1381,8 @@ def api_status(user: str = Depends(auth)):
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "state": load_state(),
                 "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE,
-                "version": APP_VERSION, "agent_version": AGENT_VERSION, "user": user},
+                "version": APP_VERSION, "agent_version": AGENT_VERSION, "user": user,
+                "password_source": "settings" if password_hash() else "env"},
             "pubkey": pubkey()}
 
 

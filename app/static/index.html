@@ -217,6 +217,9 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .evrow { font-size: 13px; padding: 4px 0; color: var(--fg); display: grid; grid-template-columns: 62px 1fr; gap: 8px; }
 .evrow .t { color: var(--muted); font-variant-numeric: tabular-nums; }
 .evrow.error { color: var(--err); } .evrow.warn { color: var(--warn); }
+.credgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 32px; }
+.credgrid > div > b { font-size: 15px; }
+.credgrid input[type=password] { flex: 1; min-width: 180px; }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -382,6 +385,30 @@ button.small { padding: 3px 9px; font-size: 12px; }
     <div class="pagehead"><h1>Settings</h1><span class="muted">How the app runs the cluster</span></div>
   <section class="card">
     <div id="ops" class="muted">Loading…</div>
+  </section>
+  <section class="card" id="credsCard">
+    <h2>Credentials</h2>
+    <div class="credgrid">
+      <div>
+        <b>Hugging Face token</b>
+        <div class="muted" id="hfState" style="margin:2px 0 8px">…</div>
+        <div class="row"><input type="password" id="hfTok" placeholder="hf_…" autocomplete="off" spellcheck="false">
+          <button class="primary" id="hfSave">Check and save</button></div>
+        <small class="muted">A <b>read</b> token from <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>.
+          The app checks it with Hugging Face before saving. Needed for gated models; for those, also accept the license on the model's page.</small>
+        <div id="hfInfo" class="muted" style="margin-top:6px"></div>
+      </div>
+      <div>
+        <b>Admin password</b>
+        <div class="muted" id="pwState" style="margin:2px 0 8px">…</div>
+        <div class="row"><input type="password" id="pwCur" placeholder="Current password" autocomplete="current-password">
+          <input type="password" id="pwNew" placeholder="New password, 10+ characters" autocomplete="new-password">
+          <button id="pwSave">Change password</button></div>
+        <small class="muted">Logs out every other browser. Forgot it? Delete <code>credentials.json</code> in the app's data
+          directory (<code>~/vllmapp-data</code>) and log in with the password from the app's env again.</small>
+        <div id="pwInfo" class="muted" style="margin-top:6px"></div>
+      </div>
+    </div>
   </section>
   <section class="card">
     <h2>Configuration</h2>
@@ -621,6 +648,7 @@ function render() {
   renderDash();
   renderDisk();
   if (!opsDrawn) renderOps();
+  renderCreds();
   if (M) drawModels(true);  // header only: running model and pending restart
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
@@ -711,9 +739,10 @@ function renderSetup() {
   h += `<div class="${hf.set && hf.valid !== false ? "muted" : "warnbox"}" style="margin-top:10px">Hugging Face token: ${
     !hf.set ? `<b>not set</b>. Gated models (Llama, Gemma and others) can't be downloaded without one, and downloads are rate-limited.
       Create a <b>read</b> token at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
-      and set <code>HF_TOKEN</code> in ${esc(hf.where)}.`
-    : hf.valid === false ? `<b>rejected by Hugging Face</b> (revoked or mistyped). Set a new <code>HF_TOKEN</code> in ${esc(hf.where)}.`
-    : `set${hf.user ? `, account <b>${esc(hf.user)}</b>` : ""}. For a gated model, also accept its license on the model's page. Change it in ${esc(hf.where)}.`}</div>`;
+      and paste it under <a href="#settings">Settings → Credentials</a>.`
+    : hf.valid === false ? `<b>rejected by Hugging Face</b> (revoked or mistyped). Save a new one under <a href="#settings">Settings → Credentials</a>.`
+    : `set${hf.user ? `, account <b>${esc(hf.user)}</b>` : ""}. For a gated model, also accept its license on the model's page.
+      Change it under <a href="#settings">Settings → Credentials</a>.`}</div>`;
   $("#setup").innerHTML = (todo ? `<p style="margin:0 0 6px">${todo} thing(s) left before the cluster can start. Commands with <code>sudo</code> run on the node itself; everything else the app does.</p>`
     : st.model_ready || !st.model ? `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`
     : `<p style="margin:0 0 6px">The nodes are ready. ${st.nodes.some(n => n.downloading) ? "The model is downloading." : "Next: download the model."}</p>`) + h;
@@ -852,6 +881,40 @@ const OPSNUM = [
   ["mem_warn_gib", "Warn when a node has less free memory than this (GiB)"],
   ["extra_watts", "Other power per node (W), added to the GPU's own reading in Usage. The GPU reading leaves out CPU, memory, network and disks; measure at the wall to set it"],
 ];
+function renderCreds() {
+  const hf = S.setup?.hf || {}, cfg = S.config;
+  $("#hfState").innerHTML = !hf.set ? `<span style="color:var(--warn)">Not set.</span>`
+    : hf.valid === false ? `<span style="color:var(--err)">Rejected by Hugging Face.</span> Save a new one.`
+    : `Set${hf.user ? `, account <b>${esc(hf.user)}</b>` : ""}.`;
+  const lockHf = !!hf.locked;
+  $("#hfTok").disabled = $("#hfSave").disabled = lockHf;
+  if (lockHf) $("#hfInfo").innerHTML = `Set as <code>HF_TOKEN</code> in the app's env, which wins. Change it in ${esc(hf.where)}.`;
+  $("#pwState").textContent = cfg.password_source === "settings" ? "Set here under Settings."
+    : "From the app's env (ADMIN_PASSWORD). Changing it here replaces that one.";
+}
+$("#hfSave").onclick = async () => {
+  const v = $("#hfTok").value.trim();
+  if (!v && !confirm("Remove the saved Hugging Face token?")) return;
+  $("#hfSave").disabled = true; $("#hfInfo").textContent = v ? "Checking with Hugging Face…" : "";
+  try {
+    const r = await fetch("api/credentials", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({hf_token: v})});
+    const d = await r.json();
+    if (!r.ok) { $("#hfInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
+    $("#hfTok").value = "";
+    $("#hfInfo").innerHTML = d.hf.set ? `<span style="color:var(--ok)">Saved${d.hf.user ? ` — account ${esc(d.hf.user)}` : ""}.</span>` : "Removed.";
+    await refresh();
+  } finally { $("#hfSave").disabled = false; }
+};
+$("#pwSave").onclick = async () => {
+  const r = await fetch("api/password", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({current: $("#pwCur").value, new: $("#pwNew").value})});
+  const d = await r.json();
+  if (!r.ok) { $("#pwInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
+  $("#pwCur").value = $("#pwNew").value = "";
+  $("#pwInfo").innerHTML = `<span style="color:var(--ok)">Changed. Other browsers are logged out; this one stays logged in.</span>`;
+  await refresh();
+};
+
 function renderOps() {
   const cfg = S.config, lock = cfg.ops_locked || [];
   const lk = k => lock.includes(k) ? `<small>Set in the app's env; remove it there to change it here.</small>` : "";

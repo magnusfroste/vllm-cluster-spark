@@ -143,8 +143,8 @@ the address, `http://<head-ip>:8090`.
 - `bash ~/vllmapp/install.sh --update` fetches the newest image and restarts the app. The
   cluster keeps running.
 - `bash ~/vllmapp/install.sh --uninstall` removes the container and keeps settings and data.
-- The Hugging Face token can be left empty during the install. Add `HF_TOKEN=hf_...` to
-  `~/vllmapp/.env` later and run `bash ~/vllmapp/install.sh` again.
+- The Hugging Face token can be left empty during the install and pasted later under
+  **Settings → Credentials**. The admin password can be changed there too.
 - To change a setting, edit `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` again.
 - The page is plain HTTP on your own network. There is no domain or HTTPS, and none is needed
   to serve models: clients reach vLLM on port 8000, or a marketplace such as GarageAI reaches it
@@ -190,7 +190,10 @@ Create a project and an **App** service (not Compose) in the head node's Easypan
   outside, add your own domain, or point a Cloudflare tunnel that runs inside Easypanel at
   `http://<project>_<service>:80` (the host's own `cloudflared` can't resolve Docker service names).
 
-Deploy and open the page. Log in as `admin` (or your `ADMIN_USER`) with `ADMIN_PASSWORD`. The
+Deploy and open the page. Log in as `admin` (or your `ADMIN_USER`) with `ADMIN_PASSWORD`. You can
+change the password later under **Settings → Credentials**; it is then stored hashed in
+`credentials.json` in the data directory and replaces the env one. Forgot it? Delete that file and
+the env password works again. The
 login lasts 30 days and survives redeploys; changing `ADMIN_PASSWORD` logs everyone out. Scripts
 can use Basic auth against `/api/…`.
 
@@ -279,7 +282,7 @@ nodes have now.
 | `SSH_PORT` | `22` | |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / – | login for the page (password required) |
 | `API_KEY` | – | vLLM's API key (required) |
-| `HF_TOKEN` | – | for gated models and the download. **Nodes** shows whether it is set and which Hugging Face account it belongs to. Set it in `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` (script install), or in Easypanel's Environment tab and deploy |
+| `HF_TOKEN` | – | for gated models and the download. Easiest: paste it under **Settings → Credentials**, where the app checks it with Hugging Face and shows the account. Set here in env, it wins and the page can't change it |
 | `HF_CACHE_DIR` | `${HOME}/.cache/huggingface` | on the nodes |
 | `TP_SIZE` | number of nodes | `--tensor-parallel-size` |
 | `PATCHES` | `auto` | `auto` picks the patch set that lists `MODEL`, `none` turns patches off, or a folder name in `app/patchsets/` |
