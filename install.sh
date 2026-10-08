@@ -10,7 +10,8 @@
 #   bash install.sh --uninstall   stop and remove the app (settings and data are kept)
 #
 # Options: --port PORT (default 8090), --image REF. Environment: VLLMAPP_DIR, VLLMAPP_DATA.
-# It needs Docker that your user can run without sudo. It never uses sudo itself.
+# It needs Docker that your user can run. DGX OS ships Docker; if it is missing, or your user
+# isn't in the docker group, the script offers to fix that with sudo and asks first.
 
 set -euo pipefail
 
@@ -32,6 +33,7 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*" >&2; }
 die()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
+ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --update)    MODE=update; shift ;;
@@ -102,10 +104,45 @@ save_conf() {
 }
 
 # ---------------------------------------------------------------------------------------------
-command -v docker >/dev/null 2>&1 || die "Docker is not installed (DGX OS has it; on other systems see docs.docker.com)."
-docker info >/dev/null 2>&1 || die "Your user can't run Docker. Run: sudo usermod -aG docker $USER, then log out and in again."
 [ "$(id -u)" -ne 0 ] || die "Run this as your normal user, not as root: the app logs in to the nodes as that user."
 command -v curl >/dev/null 2>&1 || die "curl is required."
+
+confirm() {
+  local answer=""
+  read -r -p "  $1 [Y/n] " answer </dev/tty || true
+  case "$answer" in ""|y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+# Docker, the way Easypanel's installer does it: Docker's own script, when it is missing.
+if ! command -v docker >/dev/null 2>&1; then
+  warn "Docker is not installed. (DGX OS ships it, so this system is not a standard DGX OS.)"
+  confirm "Install Docker now with Docker's official script (get.docker.com)? It uses sudo." \
+    || die "Install Docker yourself (docs.docker.com/engine/install), then run this again."
+  curl -fsSL https://get.docker.com | sudo sh
+  command -v docker >/dev/null 2>&1 || die "the Docker install did not finish"
+  ok "Docker installed"
+fi
+if ! docker info >/dev/null 2>&1; then
+  if ! id -nG "$USER" | grep -qw docker; then
+    warn "Your user ($USER) can't run Docker yet."
+    confirm "Add $USER to the docker group (sudo usermod -aG docker $USER)?" \
+      || die "Run: sudo usermod -aG docker $USER, log out and in, then run this again."
+    sudo usermod -aG docker "$USER"
+    ok "added to the docker group (other terminals need a new login to see it)"
+  fi
+  # This shell started before the group change, so continue in a shell that has it.
+  if [ -z "${VLLMAPP_IN_SG:-}" ]; then
+    mkdir -p "$DIR"
+    if [ -f "$0" ]; then self="$0"; else
+      self="$DIR/install.sh"
+      curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/install.sh" -o "$self"
+    fi
+    exec sg docker -c "VLLMAPP_IN_SG=1 VLLMAPP_DIR=$(printf %q "$DIR") VLLMAPP_DATA=$(printf %q "$DATA") bash $(printf %q "$self") $(printf '%q ' "${ARGS[@]+"${ARGS[@]}"}")"
+  fi
+  die "Docker still does not answer. Check: sudo systemctl status docker"
+fi
+docker info 2>/dev/null | grep -qiE "nvidia.com/gpu|Runtimes:.*nvidia" \
+  || warn "Docker has no NVIDIA runtime. The app's Nodes page shows how to add it; vLLM needs it, the app does not."
 
 if [ -f "$DIR/install.conf" ]; then
   # The port and image given on the command line win; otherwise keep the saved ones.

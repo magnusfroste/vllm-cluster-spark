@@ -121,8 +121,10 @@ the address, `http://<head-ip>:8090`.
 - The port is 8090 and not 8080 on purpose: GarageAI's gateway may reach 8080 on a garage, and
   the admin page should not be reachable from there. Pick another with `--port`.
 
-The script needs Docker that your user can run without sudo (DGX OS has Docker; add yourself
-to the `docker` group if `docker ps` fails). It never runs sudo itself.
+DGX OS (and the OEM units built on it) ships Docker and the NVIDIA Container Toolkit. If
+Docker is missing, the script offers to install it with Docker's official script, the way
+Easypanel's installer does, and if your user isn't in the `docker` group it offers to add it.
+Both use sudo and ask first; nothing else does.
 
 ### b. In Easypanel
 
