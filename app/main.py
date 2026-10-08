@@ -1,6 +1,7 @@
 """vllmapp — status and control of a vLLM/Ray cluster on DGX Spark.
 
-Configuration comes from the environment (Easypanel's env tab). The nodes are reached
+Configuration comes from the environment (Easypanel's env tab, or ~/vllmapp/.env when
+install.sh runs the app). The nodes are reached
 over SSH with a dedicated key that may only run vllmapp-agent (see agent/).
 """
 import base64
@@ -33,9 +34,10 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.7.2"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.8.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
+UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -1121,7 +1123,7 @@ def auth(request: Request):
     decodes ASCII and non-ASCII passwords always failed). Pages without either go to /login;
     API calls get a plain 401, so the browser shows no password dialog."""
     if not ADMIN_PASSWORD:
-        raise HTTPException(503, "ADMIN_PASSWORD is not set — set it in Easypanel's env")
+        raise HTTPException(503, "ADMIN_PASSWORD is not set — set it in the app's env (Easypanel's env tab or ~/vllmapp/.env)")
     user = session_user(request.cookies.get(SESSION_COOKIE))
     if user:
         return user
@@ -1343,7 +1345,8 @@ def newer(a, b):
 def api_version():
     latest = latest_version()
     return {"version": APP_VERSION, "latest": latest, "update": newer(latest, APP_VERSION),
-            "repo": f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else None}
+            "repo": f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else None,
+            "update_hint": UPDATE_HINT or "redeploy the app in Easypanel"}
 
 
 @app.get("/api/apikey", dependencies=[Depends(auth)])

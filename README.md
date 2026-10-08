@@ -11,7 +11,8 @@ temperature, power draw and tokens per kWh on every node. Your prompts never lea
 
 Runs a vLLM model across two or more NVIDIA DGX Spark (GB10) nodes with tensor parallelism
 over Ray, and gives you one web page to set it up, start it, watch it and fix it. The app runs
-in [Easypanel](https://easypanel.io) on the head node and controls every node over SSH.
+on the head node, either straight from a one-line install script or in
+[Easypanel](https://easypanel.io), and controls every node over SSH.
 
 Once the app is deployed, everything happens from its pages, with a menu on the left:
 
@@ -33,7 +34,8 @@ app and agent versions:
   The choice is kept in the browser and also applies to the log page and the login page.
 - **Version:** links to the commit history on GitHub, with a link to the repo under it. Once an
   hour the app checks the version on the repo's `main` branch and shows **update available**
-  when it is newer than the one running. Deploy again in Easypanel to update.
+  when it is newer than the one running, with the command that updates it: `bash ~/vllmapp/install.sh --update`
+  for the script install, or deploy again in Easypanel.
 
 The browser tab's icon shows the cluster's state: green when it answers, yellow while it
 starts, red on a problem.
@@ -83,7 +85,42 @@ reach a worker at all.
 The app checks all of this again under **Nodes** and shows the command for anything missing,
 so a step you miss here shows up there.
 
-## 1. Deploy the app in Easypanel
+## 1. Install the app
+
+There are two ways. Pick one.
+
+### a. With the install script (plain DGX OS, no Easypanel)
+
+On the head node, as your normal user (not root):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/magnusfroste/vllm-cluster-spark/main/install.sh -o install.sh
+```
+```bash
+bash install.sh
+```
+
+It asks for this node's address on the cluster link and the workers' (it suggests both), the
+login user and a Hugging Face token. It creates the admin password and the API key itself,
+saves everything in `~/vllmapp/.env` (readable only by you), and runs the app as one container
+from `ghcr.io/magnusfroste/vllm-cluster-spark` with its data in `~/vllmapp-data`. Then it prints
+the address, `http://<head-ip>:8090`.
+
+- `bash ~/vllmapp/install.sh --update` fetches the newest image and restarts the app. The
+  cluster keeps running.
+- `bash ~/vllmapp/install.sh --uninstall` removes the container and keeps settings and data.
+- To change a setting, edit `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` again.
+- The page is plain HTTP on your own network. There is no domain or HTTPS, and none is needed
+  to serve models: clients reach vLLM on port 8000, or a marketplace such as GarageAI reaches it
+  through its own encrypted tunnel. For the page from outside, use Tailscale, NetBird or a
+  Cloudflare tunnel.
+- The port is 8090 and not 8080 on purpose: GarageAI's gateway may reach 8080 on a garage, and
+  the admin page should not be reachable from there. Pick another with `--port`.
+
+The script needs Docker that your user can run without sudo (DGX OS has Docker; add yourself
+to the `docker` group if `docker ps` fails). It never runs sudo itself.
+
+### b. In Easypanel
 
 Create a project and an **App** service (not Compose) in the head node's Easypanel:
 
@@ -289,9 +326,11 @@ of the cluster files, `download` and `download-stop`. The key is useless for any
 See [docs/recovery.md](docs/recovery.md) for reinstalling a node and for the failures we have
 seen: RoCE GID missing after a reboot, autotune hangs, OOM on the head, stuck downloads.
 
-## Running without Easypanel
+## Running it by hand
+
+The install script only wraps this. To build the image yourself instead:
 
 ```bash
 docker build -t vllmapp:latest .
-docker run -d --name vllmapp -p 8080:8080 --env-file .env -v ~/vllmapp-data:/data vllmapp:latest
+docker run -d --name vllmapp --restart unless-stopped -p 8090:8090 -e PORT=8090 --env-file .env -v ~/vllmapp-data:/data vllmapp:latest
 ```

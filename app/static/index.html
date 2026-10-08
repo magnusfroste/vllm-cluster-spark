@@ -418,7 +418,8 @@ function drawVersion(cfg) {
   const repo = V?.repo;
   const ver = repo ? `<a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" title="Version history on GitHub">vllmapp ${esc(cfg.version)}</a>`
                    : `vllmapp ${esc(cfg.version)}`;
-  const upd = V?.update ? ` · <a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" style="color:var(--warn)" title="Newer on GitHub: ${esc(V.latest)}">update available (${esc(V.latest)})</a>` : "";
+  const upd = V?.update ? ` · <a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" style="color:var(--warn)" title="Newer on GitHub: ${esc(V.latest)}. To update: ${esc(V.update_hint || "")}">update available (${esc(V.latest)})</a>`
+    + (V.update_hint ? `<br><span class="muted">update: <code>${esc(V.update_hint)}</code></span>` : "") : "";
   $("#version").innerHTML = `${ver} · agent v${esc(cfg.agent_version)}${upd}`
     + (repo ? `<br><a href="${esc(repo)}" target="_blank" rel="noopener">GitHub ↗</a>` : "");
 }
