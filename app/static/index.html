@@ -551,11 +551,13 @@ function render() {
     : c.state === "starting" ? `phase: ${c.phase || "unknown"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} since start`
       + (c.log_silent_s > 60 ? ` · last log line ${dur(c.log_silent_s)} ago` : "") : "";
   $("#kv").innerHTML = [
+    ["vLLM", c.vllm_version ? c.vllm_version.replace(/\+.*/, "") : "–", c.image_ref ? "Image: " + c.image_ref : ""],
     ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("en-US") + " tokens" : "–"],
     ["Concurrency", c.concurrency ? `${c.concurrency.x}x at ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
     ["Head container uptime", dur(c.uptime_s)],
-    ["Image", c.image_mismatch ? "DIFFERS between nodes" : "same on all"],
-  ].map(([k,v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join("");
+    ["Image", (c.image_ref ? c.image_ref.replace(/^.*\//, "").replace(/@sha256:(.{8}).*/, "@$1") + " · " : "")
+      + (c.image_mismatch ? "DIFFERS between nodes" : "same on all nodes"), c.image_ref || ""],
+  ].map(([k, v, t]) => `<div title="${esc(t || "")}"><b>${k}</b><span>${esc(v)}</span></div>`).join("");
   let a = "";
   if (c.image_mismatch) a += `<div class="errbox">The nodes run different image IDs. Ray requires identical builds.</div>`;
   if (c.workers_down?.length) a += `<div class="warnbox">Worker without a running container: ${esc(c.workers_down.join(", "))}</div>`;
@@ -650,7 +652,7 @@ function renderSetup() {
   if (!st) return 0;
   let h = "", todo = 0;
   if (st.missing_env.length) { todo++;
-    h += `<div class="errbox">Set in the app's env (Easypanel's env tab, or ~/vllmapp/.env and run install.sh again): <b>${esc(st.missing_env.join(", "))}</b></div>`; }
+    h += `<div class="errbox">Set <b>${esc(st.missing_env.join(", "))}</b> in ${esc(st.env_where)}.</div>`; }
   if (st.no_model) { todo++;
     h += `<div class="errbox">Pick a model under <b>Model</b> first.</div>`; }
   if (st.patchset_missing) { todo++;
@@ -705,6 +707,13 @@ function renderSetup() {
       ${dl ? `<button id="dlStop" ${busy ? "disabled" : ""}>Stop download</button>` : ""}
       <span class="muted"><code>${esc(st.model)}</code>${st.revision ? ` @ ${esc(st.revision.slice(0, 10))}` : ""}${st.size ? ` · ${gb(st.size)}` : ""}
       · on every node in parallel${st.patchset ? ` · patch set <b>${esc(st.patchset)}</b>` : ""}</span></div>`;
+  const hf = st.hf || {};
+  h += `<div class="${hf.set && hf.valid !== false ? "muted" : "warnbox"}" style="margin-top:10px">Hugging Face token: ${
+    !hf.set ? `<b>not set</b>. Gated models (Llama, Gemma and others) can't be downloaded without one, and downloads are rate-limited.
+      Create a <b>read</b> token at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
+      and set <code>HF_TOKEN</code> in ${esc(hf.where)}.`
+    : hf.valid === false ? `<b>rejected by Hugging Face</b> (revoked or mistyped). Set a new <code>HF_TOKEN</code> in ${esc(hf.where)}.`
+    : `set${hf.user ? `, account <b>${esc(hf.user)}</b>` : ""}. For a gated model, also accept its license on the model's page. Change it in ${esc(hf.where)}.`}</div>`;
   $("#setup").innerHTML = (todo ? `<p style="margin:0 0 6px">${todo} thing(s) left before the cluster can start. Commands with <code>sudo</code> run on the node itself; everything else the app does.</p>`
     : st.model_ready || !st.model ? `<p style="margin:0 0 6px;color:var(--ok)">Everything is in place.</p>`
     : `<p style="margin:0 0 6px">The nodes are ready. ${st.nodes.some(n => n.downloading) ? "The model is downloading." : "Next: download the model."}</p>`) + h;
@@ -722,7 +731,7 @@ function renderNext(todo) {
   let step, text, btn = "";
   const dl = (st.nodes || []).filter(n => n.downloading);
   if (busy) { step = "Working"; text = `${busy} is running…`; }
-  else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in the app's env (Easypanel, or ~/vllmapp/.env).`; }
+  else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in ${st.env_where}.`; }
   else if (st.no_model) { step = "Step 1 of 4"; text = "Pick a model."; btn = `<button class="primary" onclick="go('#modelCard')">Choose model</button>`; }
   else if (todo) { step = "Step 2 of 4"; text = `Fix ${todo} thing(s) on the nodes.`; btn = `<button class="primary" onclick="go('#setupCard')">Show what</button>`; }
   else if (st.model_ready && (st.nodes || []).some(n => n.checks?.image && !n.checks.image.ok) && !c.healthy) {

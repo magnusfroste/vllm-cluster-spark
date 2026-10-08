@@ -143,6 +143,8 @@ the address, `http://<head-ip>:8090`.
 - `bash ~/vllmapp/install.sh --update` fetches the newest image and restarts the app. The
   cluster keeps running.
 - `bash ~/vllmapp/install.sh --uninstall` removes the container and keeps settings and data.
+- The Hugging Face token can be left empty during the install. Add `HF_TOKEN=hf_...` to
+  `~/vllmapp/.env` later and run `bash ~/vllmapp/install.sh` again.
 - To change a setting, edit `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` again.
 - The page is plain HTTP on your own network. There is no domain or HTTPS, and none is needed
   to serve models: clients reach vLLM on port 8000, or a marketplace such as GarageAI reaches it
@@ -277,7 +279,7 @@ nodes have now.
 | `SSH_PORT` | `22` | |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / – | login for the page (password required) |
 | `API_KEY` | – | vLLM's API key (required) |
-| `HF_TOKEN` | – | for gated models and the download |
+| `HF_TOKEN` | – | for gated models and the download. **Nodes** shows whether it is set and which Hugging Face account it belongs to. Set it in `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` (script install), or in Easypanel's Environment tab and deploy |
 | `HF_CACHE_DIR` | `${HOME}/.cache/huggingface` | on the nodes |
 | `TP_SIZE` | number of nodes | `--tensor-parallel-size` |
 | `PATCHES` | `auto` | `auto` picks the patch set that lists `MODEL`, `none` turns patches off, or a folder name in `app/patchsets/` |

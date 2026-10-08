@@ -34,10 +34,14 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.10.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.11.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
+_m = re.match(r"bash (\S+)/install\.sh", UPDATE_HINT)
+# Where env values such as HF_TOKEN are changed, in words for the page.
+ENV_WHERE = (f"{_m.group(1)}/.env, then run: bash {_m.group(1)}/install.sh" if _m
+             else "the app's Environment tab in Easypanel, then Deploy")
 
 # ---------- configuration ----------
 HEAD_HOST = env("HEAD_HOST")
@@ -412,8 +416,13 @@ def poll_once():
 
     code, _ = http_get(f"http://{HEAD_HOST}:{VLLM_PORT}/health")
     healthy = code == 200
-    models = []
+    models, vllm_version = [], None
     if healthy:
+        c3, vbody = http_get(f"http://{HEAD_HOST}:{VLLM_PORT}/version")  # no API key needed
+        try:
+            vllm_version = json.loads(vbody)["version"] if c3 == 200 else None
+        except (ValueError, KeyError):
+            pass
         c2, body = http_get(f"http://{HEAD_HOST}:{VLLM_PORT}/v1/models",
                             {"Authorization": f"Bearer {API_KEY}"})
         try:
@@ -476,6 +485,8 @@ def poll_once():
             "phase_pct": pct,
             "healthy": healthy,
             "models": models,
+            "vllm_version": vllm_version,
+            "image_ref": (load_state().get("applied") or {}).get("image"),
             "kv_tokens": kv,
             "concurrency": conc,
             "errors": [redact(e) for e in errs[-15:]],
@@ -502,6 +513,24 @@ def poll_once():
 
 
 _model_size = {}
+_hf = {"ts": 0, "info": None}
+
+
+def hf_status():
+    """Whether HF_TOKEN is set and which account it belongs to (checked once an hour)."""
+    if not HF_TOKEN:
+        return {"set": False, "where": ENV_WHERE}
+    if now() - _hf["ts"] > 3600 or _hf["info"] is None:
+        _hf["ts"] = now()
+        code, body = http_get("https://huggingface.co/api/whoami-v2",
+                              {"Authorization": f"Bearer {HF_TOKEN}"}, timeout=10)
+        try:
+            _hf["info"] = {"valid": True, "user": json.loads(body).get("name")} if code == 200 \
+                else {"valid": False if code == 401 else None}
+        except ValueError:
+            _hf["info"] = {"valid": None}
+    return {"set": True, "where": ENV_WHERE, **_hf["info"]}
+
 
 
 def model_size():
@@ -550,7 +579,7 @@ def setup_summary(nodes, running=()):
                     "downloading": bool(dl.get("running")),
                     "download_failed": bool(dl) and not dl.get("running") and dl.get("exit_code") != 0})
     applied = load_state().get("applied")
-    return {"missing_env": missing, "model": c["model"], "revision": c["revision"], "size": size,
+    return {"missing_env": missing, "env_where": ENV_WHERE, "hf": hf_status(), "model": c["model"], "revision": c["revision"], "size": size,
             "no_model": CONFIG_MODE == "managed" and not (c["model"] and c["image"]),
             "patchset": c["patchset"],
             "patchset_missing": bool(c["patchset"]) and c["patchset"] not in PATCHSETS,
