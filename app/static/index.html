@@ -119,6 +119,8 @@ details summary { cursor: pointer; color: var(--accent); }
 .mcard:hover { border-color: var(--accent); }
 .mcard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .mcard input { display: none; }
+.mcard.off { opacity: .55; cursor: not-allowed; }
+.mcard.off:hover { border-color: var(--line); }
 .mcard b { display: block; }
 .mcard .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .mcard .notes { font-size: 12px; margin-top: 6px; }
@@ -570,7 +572,7 @@ const FIX = {
   docker: ["Docker usable by the SSH user", h => `sudo usermod -aG docker $USER   # then log out and back in`],
   nvidia_toolkit: ["NVIDIA Container Toolkit", h =>
     `sudo apt install -y nvidia-container-toolkit\nsudo nvidia-ctk runtime configure --runtime=docker\nsudo systemctl restart docker`],
-  link_ip: [h => `Cluster link IP ${h}`, h =>
+  link_ip: [h => S.config.workers?.length ? `Cluster link IP ${h}` : `This node's address ${h}`, h =>
     `ip -br link   # find the port the QSFP cable is in (state UP)\n` +
     `sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses ${h}/24\n` +
     `sudo nmcli con up cluster`],
@@ -589,7 +591,7 @@ function renderSetup() {
   if (!st) return 0;
   let h = "", todo = 0;
   if (st.missing_env.length) { todo++;
-    h += `<div class="errbox">Set in Easypanel's env, then deploy: <b>${esc(st.missing_env.join(", "))}</b></div>`; }
+    h += `<div class="errbox">Set in the app's env (Easypanel's env tab, or ~/vllmapp/.env and run install.sh again): <b>${esc(st.missing_env.join(", "))}</b></div>`; }
   if (st.no_model) { todo++;
     h += `<div class="errbox">Pick a model under <b>Model</b> first.</div>`; }
   if (st.patchset_missing) { todo++;
@@ -661,7 +663,7 @@ function renderNext(todo) {
   let step, text, btn = "";
   const dl = (st.nodes || []).filter(n => n.downloading);
   if (busy) { step = "Working"; text = `${busy} is running…`; }
-  else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in Easypanel's env and deploy.`; }
+  else if (st.missing_env?.length) { step = "Setup"; text = `Set ${st.missing_env.join(", ")} in the app's env (Easypanel, or ~/vllmapp/.env).`; }
   else if (st.no_model) { step = "Step 1 of 4"; text = "Pick a model."; btn = `<button class="primary" onclick="go('#modelCard')">Choose model</button>`; }
   else if (todo) { step = "Step 2 of 4"; text = `Fix ${todo} thing(s) on the nodes.`; btn = `<button class="primary" onclick="go('#setupCard')">Show what</button>`; }
   else if (st.model_ready && (st.nodes || []).some(n => n.checks?.image && !n.checks.image.ok) && !c.healthy) {
@@ -784,7 +786,7 @@ const OPSNUM = [
 ];
 function renderOps() {
   const cfg = S.config, lock = cfg.ops_locked || [];
-  const lk = k => lock.includes(k) ? `<small>Set in Easypanel's env; remove it there to change it here.</small>` : "";
+  const lk = k => lock.includes(k) ? `<small>Set in the app's env; remove it there to change it here.</small>` : "";
   $("#ops").innerHTML = OPS.map(([k, t, d]) => `<label class="opt"><input type="checkbox" data-op="${k}" ${cfg[k] ? "checked" : ""} ${lock.includes(k) ? "disabled" : ""}>
       <span><b>${t}</b><small>${d}</small>${lk(k)}</span></label>`).join("") +
     `<details style="margin-top:6px"><summary>Timing</summary>` +
@@ -922,18 +924,26 @@ function drawModels(headOnly) {
     + (S?.setup?.pending ? ` · <span class="badge untested">Restart to apply</span>` : "")
     + (locked ? `<div class="warnbox">${esc(cur.locked.map(k => ({model:"MODEL",served_model_name:"SERVED_MODEL_NAME",image:"VLLM_IMAGE",
         gpu_mem_util:"GPU_MEM_UTIL",max_model_len:"MAX_MODEL_LEN",vllm_args:"VLLM_EXTRA_ARGS",revision:"MODEL_REVISION"})[k]).join(", "))}
-        ${locked > 1 ? "are" : "is"} set in Easypanel's env and override${locked > 1 ? "" : "s"} the choice here. Remove ${locked > 1 ? "them" : "it"} there to choose here.</div>` : "");
+        ${locked > 1 ? "are" : "is"} set in the app's env and override${locked > 1 ? "" : "s"} the choice here. Remove ${locked > 1 ? "them" : "it"} there to choose here.</div>` : "");
   if (headOnly) return;
-  const card = (id, title, meta, notes, badge) => `<label class="mcard ${pick === id ? "sel" : ""}">
-      <input type="radio" name="m" value="${esc(id)}" ${pick === id ? "checked" : ""}>
+  const tooBig = id => (M.catalog.find(m => m.id === id)?.min_nodes || 1) > (M.nodes || 1);
+  const card = (id, title, meta, notes, badge) => `<label class="mcard ${pick === id ? "sel" : ""} ${tooBig(id) ? "off" : ""}">
+      <input type="radio" name="m" value="${esc(id)}" ${pick === id ? "checked" : ""} ${tooBig(id) ? "disabled" : ""}>
       <b>${esc(title)} ${badge}</b><div class="meta">${meta}</div>${notes ? `<div class="notes">${esc(notes)}</div>` : ""}</label>`;
+  const nodes = M.nodes || 1;
   const group = (title, list) => list.length ? `<div class="muted" style="grid-column:1/-1;margin-top:4px">${title}</div>` + list.map(m => card(m.id, m.name,
-      `${m.size_gb} GB · ${m.min_nodes > 1 ? `needs ${m.min_nodes} nodes` : "fits on one node"} · <code>${esc(m.model)}</code>`,
+      `${m.size_gb} GB · ${m.min_nodes > nodes ? `<b>needs ${m.min_nodes} Sparks — this setup has ${nodes}</b>`
+        : m.min_nodes > 1 ? `needs ${m.min_nodes} Sparks` : "fits on one Spark"} · <code>${esc(m.model)}</code>`,
       m.notes, `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`
         + (cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : "")))
     .join("") : "";
-  $("#models").innerHTML = group("Needs a cluster — what this app is for", M.catalog.filter(m => m.min_nodes > 1))
-    + group("Fits on one Spark — also runs here, across all nodes", M.catalog.filter(m => m.min_nodes <= 1))
+  const one = M.catalog.filter(m => m.min_nodes <= 1), more = M.catalog.filter(m => m.min_nodes > 1);
+  $("#models").innerHTML = nodes > 1
+    ? group(`Needs ${nodes} Sparks — what a cluster is for`, more.filter(m => m.min_nodes <= nodes))
+      + group(`Fits on one Spark — runs here across all ${nodes} nodes`, one)
+      + group("Needs more Sparks than this setup has", more.filter(m => m.min_nodes > nodes))
+    : group("Fits on one Spark", one)
+      + group("Needs two Sparks — connect a second one to run these", more)
     + `<div class="muted" style="grid-column:1/-1;margin-top:4px">Anything else</div>` + card("custom", "Other model from Hugging Face", "Any repo vLLM supports, NVFP4 recommended", "You set the arguments. Nothing is checked in advance.", "");
   const e = pick === "custom" ? (M.settings.custom || {}) : M.catalog.find(m => m.id === pick) || {};
   const same = pick === M.settings.id;

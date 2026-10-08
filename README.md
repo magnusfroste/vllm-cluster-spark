@@ -9,8 +9,8 @@ temperature, power draw and tokens per kWh on every node. Your prompts never lea
 
 ## What it does
 
-Runs a vLLM model across two or more NVIDIA DGX Spark (GB10) nodes with tensor parallelism
-over Ray, and gives you one web page to set it up, start it, watch it and fix it. The app runs
+Runs a vLLM model on one NVIDIA DGX Spark (GB10), or across two or more with tensor
+parallelism (over Ray or vLLM's own multi-node mode), and gives you one web page to set it up, start it, watch it and fix it. The app runs
 on the head node, either straight from a one-line install script or in
 [Easypanel](https://easypanel.io), and controls every node over SSH.
 
@@ -47,8 +47,12 @@ resort.
 
 ## What you need
 
-- Two or more DGX Spark nodes (or OEM GB10 units), with the same OS user on each
-- A direct QSFP cable between them: the **cluster link**. With more than two nodes, a switch
+- One or more DGX Spark nodes (or OEM GB10 units), with the same OS user on each. One Spark
+  runs the models that fit in its memory (the catalog marks them "fits on one Spark"); the big
+  ones need two
+- With two or more: a direct QSFP cable between them, the **cluster link**. With more than two,
+  a switch. With one Spark there is no link: use the node's own address as `HEAD_HOST`, leave
+  `WORKER_HOSTS` empty, and skip the link steps below
 - Internet on **every** node (wifi or the LAN port): each node downloads the image and the model
   itself, so a worker that only has the cluster link can't download anything
 - A [Hugging Face](https://huggingface.co) account, for the model download

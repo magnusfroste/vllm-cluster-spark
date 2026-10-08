@@ -34,7 +34,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.8.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.9.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -427,7 +427,7 @@ def poll_once():
     last_ts = parse_ts((scan.get("last") or "").split(" ", 1)[0])
     stall = now() - last_ts if last_ts else None
     roce_bad = [{"role": n["role"], "host": n["host"], "hca": r["hca"], "iface": r["iface"]}
-                for n in nodes for r in (n.get("roce") or []) if not r["ok"]]
+                for n in nodes for r in (n.get("roce") or []) if not r["ok"]] if len(NODES) > 1 else []
 
     if healthy:
         state = "ready"
@@ -729,7 +729,10 @@ def roce_fix(bad):
 
 
 def preflight():
-    """RoCE GID 3 must exist on every node, otherwise NCCL init fails with 'unhandled system error'."""
+    """RoCE GID 3 must exist on every node, otherwise NCCL init fails with 'unhandled system error'.
+    One node uses no link at all, so there is nothing to check."""
+    if len(NODES) < 2:
+        return
     with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
         res = list(ex.map(lambda n: (n, ssh(n["host"], "roce", timeout=20)[1]), NODES))
     bad = [{"role": n["role"], "host": n["host"], "hca": r["hca"], "iface": r["iface"]}
@@ -967,6 +970,13 @@ set -euo pipefail
 # ranks hit it differently and fall out of step (gloo waiting on one, NCCL on the
 # other) until the 30 min timeout. Without a cache the tuning takes ~1 min.
 rm -rf /root/.cache/vllm/flashinfer_autotune_cache
+
+# One node: a plain vllm serve, with neither Ray nor the multi-node flags.
+if [ "${NUM_NODES:-1}" -le 1 ]; then
+  echo "Starting vLLM with ${MODEL} (one node)"
+  exec vllm serve "${MODEL}" --tensor-parallel-size "${TP_SIZE:-1}" \
+    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" ${VLLM_EXTRA_ARGS:-}
+fi
 
 if [ "${EXECUTOR:-ray}" = "mp" ]; then
   MP_ARGS=(--tensor-parallel-size "${TP_SIZE:-$NUM_NODES}" --distributed-executor-backend mp
