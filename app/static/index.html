@@ -247,6 +247,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
       <a class="navitem" data-nav="models" href="#models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Models</span><span class="navbadge" id="nb-models"></span></a>
       <a class="navitem" data-nav="api" href="#api"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l-4 3 4 3m8-6l4 3-4 3M14 5l-4 14" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>API</span><span class="navbadge" id="nb-api"></span></a>
       <a class="navitem" data-nav="usage" href="#usage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Usage</span><span class="navbadge" id="nb-usage"></span></a>
+      <a class="navitem" data-nav="garageai" href="#garageai"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" stroke="currentColor" fill="none" stroke-width="2" stroke-linejoin="round"/></svg><span>GarageAI</span><span class="navbadge" id="nb-garageai"></span></a>
       <div class="navgroup">admin</div>
       <a class="navitem" data-nav="settings" href="#settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z" stroke="currentColor" fill="none" stroke-width="1.6"/></svg><span>Settings</span><span class="navbadge" id="nb-settings"></span></a>
     </nav>
@@ -403,6 +404,44 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     <div id="usage" class="muted">Loading…</div>
   </section>
   </div>
+  <div class="page" data-page="garageai">
+    <div class="pagehead"><h1>GarageAI</h1><span class="muted">Offer this cluster's inference on <a href="https://www.garageai.eu" target="_blank" rel="noopener">garageai.eu</a> — optional</span></div>
+  <section class="card">
+    <h2 style="display:flex;justify-content:space-between;align-items:baseline">Status on the head node
+      <button class="small" id="gaRefresh">Check again</button></h2>
+    <div id="gaStatus" class="muted">Loading…</div>
+  </section>
+  <section class="card">
+    <h2>Connect this cluster</h2>
+    <ol class="steps">
+      <li><b>Create a garage in the portal.</b> Sign in at
+        <a href="https://app.garageai.eu/dashboard/offer-gpu" target="_blank" rel="noopener">app.garageai.eu → Offer your GPU</a>
+        (new to GarageAI: <a href="https://app.garageai.eu/auth?intent=operator" target="_blank" rel="noopener">sign up as an operator</a>).
+        Pick <b>vLLM</b> as the runtime, choose a garage name and accept the operator terms.</li>
+      <li><b>Run the command the portal shows on the head node</b> (<code id="gaHead"></code>), in a terminal or over SSH as
+        your normal user. It installs NetBird and a small heartbeat, which needs sudo, so the app can't run it for you.
+        Where the command says <code>&lt;YOUR_KEY&gt;</code>, put this cluster's API key:
+        <div class="row" style="margin-top:6px"><input type="password" id="gaKey" readonly style="max-width:420px" value="">
+          <button class="small" id="gaKeyShow">Show</button><button class="small" id="gaKeyCopy">Copy</button></div>
+        <small class="muted">The setup key and register token in the command are one-time secrets for your terminal only:
+          this page never asks for them. Paste only the key, with nothing else inside the quotes.</small></li>
+      <li><b>Offer the model.</b> When the status above shows the mesh and the heartbeat, go to
+        <a href="https://app.garageai.eu/dashboard/garages" target="_blank" rel="noopener">My garages</a> → your garage →
+        turn on <b>Offer</b> for the model (<span id="gaModel">…</span>). GarageAI runs an acceptance test; the model is
+        sold once it passes. The portal shows whether it is live and what it earns.</li>
+    </ol>
+    <details><summary>Run the command again later</summary>
+      <p class="muted">For a new register token, use <b>My garages → your garage → New command</b>. That command skips the
+        NetBird install and keeps the mesh connection. Only the head node needs GarageAI; the workers need nothing.</p></details>
+  </section>
+  <section class="card" id="gaSwitch" style="display:none">
+    <h2>After a model switch</h2>
+    <p style="margin:0">Serving now: <b id="gaServing"></b>. The heartbeat reports it to GarageAI within 5 minutes.
+      Then turn on <b>Offer</b> for it under <a href="https://app.garageai.eu/dashboard/garages" target="_blank" rel="noopener">My garages</a>;
+      the previous model shows as not installed. The portal shows the name buyers use. The gateway uses 95 % of the
+      model's context window.</p>
+  </section>
+  </div>
   <div class="page" data-page="settings">
     <div class="pagehead"><h1>Settings</h1><span class="muted">How the app runs the cluster</span></div>
   <section class="card">
@@ -552,11 +591,12 @@ function showPage() {
   document.querySelectorAll("[data-page]").forEach(p => p.classList.toggle("on", p.dataset.page === t));
   document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === t));
   $("#sidebar").classList.remove("open");
-  const name = t === "api" ? "API" : t[0].toUpperCase() + t.slice(1);
+  const name = {api: "API", garageai: "GarageAI"}[t] || t[0].toUpperCase() + t.slice(1);
   document.title = `${name} · vLLM cluster`;
   $("#crumb").textContent = name;
   if (t === "logs") showLog();
   if (t === "usage") drawUsage?.();
+  if (t === "garageai") loadGarage();
   scrollTo(0, 0);
 }
 window.addEventListener("hashchange", showPage);
@@ -957,6 +997,58 @@ async function nodesCall(action, host, ask, force) {
   await refresh(); try { await loadModels(); } catch (e) {}
 }
 $("#addBtn").onclick = () => { const h = $("#addHost").value.trim() || $("#addHost").placeholder; nodesCall("add", h); };
+
+// ---------- GarageAI: what the agent reads on the head; the portal is the source of truth ----------
+let G = null;
+async function loadGarage(fresh) {
+  try { G = await (await fetch("api/garage" + (fresh ? "?fresh=1" : ""))).json(); } catch (e) { G = {error: String(e)}; }
+  drawGarage();
+}
+function drawGarage() {
+  if (!G) return;
+  $("#gaHead").textContent = S?.config?.head || "";
+  const model = (G.serving || [])[0] || G.chosen || "";
+  $("#gaModel").innerHTML = model ? `serving now: <code>${esc(model)}</code>` : "start one under Models first";
+  if (G.agent_old) { $("#gaStatus").innerHTML = `<div class="warnbox">The agent on the head is too old to read this.
+    Run the command under <a href="#nodes">Nodes → Install the agent on a node</a> on the head again.</div>`; return; }
+  if (G.unreachable) { $("#gaStatus").innerHTML = `<div class="errbox">The app can't reach the head node: ${esc(G.error || "")}</div>`; return; }
+  const ago = t => t ? dur(Date.now() / 1000 - t) + " ago" : "";
+  const rows = [
+    [G.netbird, "NetBird client installed", G.version ? `version ${esc(G.version)}` : "it comes with the command from the portal"],
+    [G.netbird && G.management === true, "Connected to the GarageAI mesh",
+      G.mesh_ip ? `address <code>${esc(G.mesh_ip)}</code>${G.fqdn ? ` · ${esc(G.fqdn)}` : ""}` : G.daemon ? `NetBird says: ${esc(G.daemon)}` : ""],
+    [G.heartbeat, "Heartbeat running", "reports the served models every 5 minutes"],
+    [G.last ? G.last.ok : null, "Last report accepted by GarageAI",
+      G.last ? (G.last.ok ? ago(G.last.ts) : `rejected ${ago(G.last.ts)}: get a new command under My garages → New command`) : "no report yet"],
+    [G.mesh_api === "401" || G.mesh_api === "200", "vLLM answers on the mesh address",
+      G.mesh_api ? `HTTP ${esc(G.mesh_api)} from the head itself${G.mesh_api === "401" ? " (the key is required, as it should be)" : ""}` : ""],
+  ];
+  const connected = G.netbird && G.management === true && G.heartbeat;
+  $("#gaStatus").innerHTML = `<div class="checks">${rows.map(([ok, label, d]) =>
+      `<span class="${ok ? "y" : ok === false || ok === undefined ? "n" : "o"}">${ok ? "✓" : ok == null ? "·" : "✗"}</span>
+       <span><b style="font-weight:500">${label}</b> <span class="muted">${d || ""}</span></span>`).join("")}</div>
+    <p class="muted" style="margin:10px 0 0">${connected
+      ? "Connected to the mesh and reporting. Whether a model is offered and live, and what it earns, the portal shows."
+      : G.netbird ? "Not fully connected yet. Run the portal's command again (step 2), or check <code>sudo netbird status</code> on the head."
+      : "Not connected to GarageAI. Follow the steps below if you want to offer this cluster's inference."}
+      <span title="Checked by the app">· checked ${ago(G.checked)}</span></p>`;
+  $("#gaSwitch").style.display = connected && model ? "" : "none";
+  $("#gaServing").textContent = model;
+}
+$("#gaRefresh").onclick = () => { $("#gaStatus").textContent = "Checking…"; loadGarage(true); };
+$("#gaKeyShow").onclick = async () => {
+  const i = $("#gaKey");
+  if (!i.value) i.value = (await (await fetch("api/apikey")).json()).key || "";
+  i.type = i.type === "password" ? "text" : "password";
+  $("#gaKeyShow").textContent = i.type === "password" ? "Show" : "Hide";
+};
+$("#gaKeyCopy").onclick = async () => {
+  const i = $("#gaKey");
+  if (!i.value) i.value = (await (await fetch("api/apikey")).json()).key || "";
+  try { await navigator.clipboard.writeText(i.value); $("#gaKeyCopy").textContent = "Copied"; }
+  catch (e) { i.type = "text"; i.select(); $("#gaKeyCopy").textContent = "Press Ctrl/Cmd+C"; }
+  setTimeout(() => $("#gaKeyCopy").textContent = "Copy", 2500);
+};
 
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;

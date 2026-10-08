@@ -55,6 +55,7 @@ Once the app is deployed, everything happens from its pages, with a menu on the 
 | **Models** | **Models** | A catalog of ready-made models, or any model on Hugging Face; download on every node at once; the models on disk, with Delete |
 | | **API** | The API addresses, model name and key, examples for curl, Python and OpenCode, and a test prompt |
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
+| | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
 | **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the app writes |
 
 The bottom of the menu shows who is logged in (`ADMIN_USER`), Log out, a theme switch, and the
@@ -275,6 +276,18 @@ changing the head's address needs a stopped cluster. The list on the page replac
 `HEAD_HOST`/`WORKER_HOSTS` from env. If the head was installed as a single Spark with its
 address on wifi or the LAN port, the page says so: give the head a link address as well and
 change its address on the page before adding the second.
+
+## Offering the cluster on GarageAI (optional)
+
+[GarageAI](https://www.garageai.eu) is a marketplace where GPU owners sell inference. The
+**GarageAI** page walks through connecting this cluster: create a garage in the portal with
+vLLM as the runtime, run the command the portal shows on the head node (it installs NetBird and
+a heartbeat with sudo, so the app can't run it), use this cluster's API key where it says
+`<YOUR_KEY>`, then turn on **Offer** for the model in the portal. The page reads the result on
+the head without root: the NetBird tunnel, the heartbeat and its last report, and whether vLLM
+answers on the mesh address. It never asks for the portal's setup key or register token, and
+it doesn't say whether a model is live or what it earns: the portal does. After a model
+switch it reminds you to offer the new model. Only the head node needs GarageAI.
 
 ## Changing the model or the config
 

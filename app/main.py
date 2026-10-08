@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.13.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.14.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1362,6 +1362,25 @@ async def api_nodes(request: Request):
            "remove": f"node removed: worker {host}",
            "head": f"head address changed to {host}"}[action])
     return {"ok": True, "head": HEAD_HOST, "workers": WORKER_HOSTS, "nodes": len(NODES)}
+
+
+_garage = {"ts": 0, "res": None}
+
+
+@app.get("/api/garage", dependencies=[Depends(auth)])
+def api_garage(fresh: int = 0):
+    """GarageAI on the head node, as the agent reads it without root (cached for a minute)."""
+    if fresh or now() - _garage["ts"] > 60 or _garage["res"] is None:
+        rc, res, err = ssh(HEAD_HOST, f"garage {VLLM_PORT}", timeout=40)
+        if res and "error" in res and "unknown command" in str(res["error"]):
+            res = {"agent_old": True}
+        elif not res:
+            res = {"unreachable": True, "error": redact(str(err))[-200:]}
+        _garage.update(ts=now(), res=res)
+    c = cfg()
+    return {**_garage["res"], "checked": _garage["ts"], "port": VLLM_PORT,
+            "serving": (STATUS.get("cluster") or {}).get("models") or [],
+            "chosen": c["served_model_name"], "agent_version": AGENT_VERSION}
 
 
 @app.post("/api/credentials", dependencies=[Depends(auth)])

@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "8"
+VERSION = "9"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -450,6 +450,46 @@ def download_stop():
     out({"rc": rc, "out": (so + se)[-500:]})
 
 
+def garage(port):
+    """GarageAI on this node, read as the normal user: the NetBird tunnel, the heartbeat timer
+    and its last report, and whether vLLM answers on the mesh address (401 without a key).
+    NetBird's JSON fields can move between versions, so every one is optional."""
+    import shutil
+
+    def run(cmd, timeout=15):  # tools a node may lack must not crash the report
+        try:
+            return globals()["run"](cmd, timeout=timeout)
+        except (OSError, subprocess.SubprocessError):
+            return 1, "", ""
+    res = {"netbird": bool(shutil.which("netbird"))}
+    if res["netbird"]:
+        rc, so, se = run(["netbird", "status", "--json"])
+        try:
+            st = json.loads(so)
+            m = st.get("management") or {}
+            res.update({"daemon": st.get("daemonStatus"), "mesh_ip": (st.get("netbirdIp") or "").split("/")[0],
+                        "fqdn": st.get("fqdn"), "management": m.get("connected"),
+                        "management_url": m.get("url"), "peers": st.get("peers", {}).get("connected"),
+                        "version": st.get("daemonVersion")})
+        except ValueError:
+            res["error"] = (se or so).strip()[-200:]
+    rc, _, _ = run(["systemctl", "is-active", "--quiet", "garageai-heartbeat.timer"])
+    res["heartbeat"] = rc == 0
+    # The last report: exit 0 means GarageAI accepted it (the heartbeat uses curl -f). The reply
+    # body is not a contract, so it is not read.
+    rc, so, _ = run(["systemctl", "show", "garageai-heartbeat.service", "-p", "ExecMainStatus",
+                     "-p", "ExecMainExitTimestamp", "--timestamp=unix"])
+    kv = dict(l.split("=", 1) for l in so.splitlines() if "=" in l)
+    ts = kv.get("ExecMainExitTimestamp", "").lstrip("@")
+    if ts.isdigit():
+        res["last"] = {"ts": int(ts), "ok": kv.get("ExecMainStatus") == "0"}
+    if res.get("mesh_ip"):
+        rc, so, _ = run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5",
+                         f"http://{res['mesh_ip']}:{port}/v1/models"])
+        res["mesh_api"] = so.strip() or None
+    out(res)
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -491,6 +531,8 @@ def main():
         drop_caches()
     elif cmd == "download-stop":
         download_stop()
+    elif cmd == "garage":
+        garage(args[0] if args and args[0].isdigit() else "8000")
     elif cmd == "version":
         out({"agent": VERSION})
     else:
