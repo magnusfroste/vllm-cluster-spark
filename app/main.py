@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.17.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.18.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -633,6 +633,8 @@ def setup_summary(nodes, running=()):
         m = n.get("model") or {}
         dl = m.get("download") or {}
         checks = dict(n.get("checks") or {})
+        if len(NODES) < 2:  # one node opens no cluster ports
+            checks.pop("cluster_ports", None)
         if "disk_free" in checks and size and not m.get("present"):
             need = size - m.get("bytes", 0)
             checks["disk_free"] = {**checks["disk_free"], "ok": checks["disk_free"]["bytes"] > need * 1.05,
@@ -1020,6 +1022,11 @@ services:
     image: ${VLLM_IMAGE}
     container_name: vllm-${ROLE}
     restart: unless-stopped
+    logging:  # json-file has no limit by default; a node would fill up over months
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     entrypoint: ["/bin/bash", "/opt/entrypoint.sh"]
     network_mode: host
     ipc: host
@@ -1071,7 +1078,7 @@ rm -rf /root/.cache/vllm/flashinfer_autotune_cache
 if [ "${NUM_NODES:-1}" -le 1 ]; then
   echo "Starting vLLM with ${MODEL} (one node)"
   exec vllm serve "${MODEL}" --tensor-parallel-size "${TP_SIZE:-1}" \
-    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" ${VLLM_EXTRA_ARGS:-}
+    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" --disable-uvicorn-access-log ${VLLM_EXTRA_ARGS:-}
 fi
 
 if [ "${EXECUTOR:-ray}" = "mp" ]; then
@@ -1084,7 +1091,7 @@ if [ "${EXECUTOR:-ray}" = "mp" ]; then
   fi
   echo "Starting vLLM with ${MODEL} (multiprocessing executor, node rank 0)"
   exec vllm serve "${MODEL}" "${MP_ARGS[@]}" \
-    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" ${VLLM_EXTRA_ARGS:-}
+    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" --disable-uvicorn-access-log ${VLLM_EXTRA_ARGS:-}
 fi
 
 if [ "$ROLE" = "worker" ]; then
@@ -1108,6 +1115,7 @@ exec vllm serve "${MODEL}" \
   --distributed-executor-backend ray \
   --host 0.0.0.0 --port 8000 \
   --api-key "${VLLM_API_KEY}" \
+  --disable-uvicorn-access-log \
   ${VLLM_EXTRA_ARGS:-}
 """
 

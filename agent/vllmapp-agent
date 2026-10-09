@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "9"
+VERSION = "10"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -361,6 +361,8 @@ def setup(c, host_ip, head_ip, cache, repo, rev="", image="-"):
         checks["image"] = {"ok": rc == 0, "detail": image}
     checks["reboot_sudo"] = {"ok": can_reboot(), "optional": True}
     checks["drop_caches_sudo"] = {"ok": can_drop_caches(), "optional": True}
+    rc, _, _ = run(["systemctl", "is-active", "--quiet", "vllm-panel-ports.service"])
+    checks["cluster_ports"] = {"ok": rc == 0, "optional": True}
     rdma = set()  # the cluster link ports: RoCE interfaces are not for clients
     for dev in os.listdir("/sys/class/infiniband") if os.path.isdir("/sys/class/infiniband") else []:
         try:

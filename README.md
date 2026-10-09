@@ -159,6 +159,8 @@ the address, `http://<head-ip>:8090`.
 - The Hugging Face token can be left empty during the install and pasted later under
   **Settings → Hugging Face**. The admin password is changed in the profile menu, top right.
 - To change a setting, edit `~/vllmapp/.env` and run `bash ~/vllmapp/install.sh` again.
+- Logs are capped: the panel's container keeps 3 × 10 MB, each vLLM container 3 × 50 MB, and vLLM
+  doesn't log a line per request.
 - The page is plain HTTP on your own network. There is no domain or HTTPS, and none is needed
   to serve models: clients reach vLLM on port 8000, or a marketplace such as GarageAI reaches it
   through its own encrypted tunnel. For the page from outside, use Tailscale, NetBird or a
@@ -288,6 +290,16 @@ changing the head's address needs a stopped cluster. The list on the page replac
 `HEAD_HOST`/`WORKER_HOSTS` from env. If the head was installed as a single Spark with its
 address on wifi or the LAN port, the page says so: give the head a link address as well and
 change its address on the page before adding the second.
+
+## Keeping the cluster ports on the cluster link
+
+With two or more Sparks the nodes talk to each other on a few ports: torch distributed
+(29500–29510) and, for models that use Ray, Ray's ports. They listen on every network, wifi
+and the LAN included, without a password. **Nodes** has an optional check with the commands
+for a small nftables rule, loaded at boot by a systemd unit, that closes those ports to
+everything except the cluster link. The API on 8000 and everything else stay as they are.
+Do it before offering the cluster on GarageAI or running it on a shared network. With one
+Spark there are no such ports and the check doesn't show.
 
 ## Offering the cluster on GarageAI (optional)
 

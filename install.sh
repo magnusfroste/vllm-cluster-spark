@@ -79,6 +79,7 @@ pull_image() {
 run_container() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker run -d --name "$NAME" --restart unless-stopped \
+    --log-opt max-size=10m --log-opt max-file=3 \
     -p "${PORT}:${PORT}" -e "PORT=${PORT}" \
     -e "UPDATE_HINT=bash $DIR/install.sh --update" \
     --env-file "$DIR/.env" -v "$DATA:/data" "$IMAGE" >/dev/null

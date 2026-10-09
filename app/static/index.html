@@ -789,8 +789,45 @@ const FIX = {
   image: ["The model's vLLM image is on this node", null],
   reboot_sudo: ["Passwordless reboot (optional, for the reboot button)", h => SUDOERS],
   drop_caches_sudo: ["Free the page cache before a start (optional, gives the KV cache more room)", h => SUDOERS],
+  cluster_ports: ["Cluster ports only on the cluster link (optional; do it before offering the cluster on GarageAI)", h => PORTS_FW()],
 };
 const gb = b => b == null ? "?" : (b / 1e9).toFixed(1) + " GB";
+// The ports the nodes use to talk to each other (torch distributed, Ray) listen on every network, without a
+// password. This keeps them on the cluster link: a small nftables table, loaded at boot by a systemd unit.
+const PORTS_FW = () => {
+  const sub = (S.config.head || "192.168.100.1").split(".").slice(0, 3).join(".") + ".0/24";
+  return `# The same on every node. Only the ports the nodes use among themselves are closed, and only for
+# traffic that doesn't come over the cluster link (${sub}); the API on 8000 and everything else stay as they are.
+sudo mkdir -p /etc/vllm-panel
+sudo tee /etc/vllm-panel/cluster-ports.nft >/dev/null <<'NFT'
+table inet vllm_panel
+delete table inet vllm_panel
+table inet vllm_panel {
+  chain input {
+    type filter hook input priority 0; policy accept;
+    iifname "lo" accept
+    ip saddr ${sub} accept
+    tcp dport { 29500-29510, 6379, 8265, 10001, 52365 } drop
+  }
+}
+NFT
+sudo tee /etc/systemd/system/vllm-panel-ports.service >/dev/null <<'UNIT'
+[Unit]
+Description=vLLM Panel: cluster ports only on the cluster link
+After=network-pre.target
+Wants=network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/vllm-panel/cluster-ports.nft
+ExecStop=/usr/sbin/nft delete table inet vllm_panel
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload && sudo systemctl enable --now vllm-panel-ports
+# To remove it again: sudo systemctl disable --now vllm-panel-ports`;
+};
+
 
 let setupOpen = false;
 function renderSetup() {
