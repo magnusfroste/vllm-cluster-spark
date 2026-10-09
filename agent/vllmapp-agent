@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "10"
+VERSION = "11"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -492,6 +492,48 @@ def garage(port):
     out(res)
 
 
+def images():
+    """Every image on the node, with whether a container (running or stopped) uses it."""
+    rc, so, se = run(["docker", "images", "--digests", "--no-trunc", "--format", "{{json .}}"], timeout=30)
+    if rc != 0:
+        return out({"error": se.strip()[-200:]})
+    rc2, used, _ = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{.Image}}"], timeout=30)
+    used_refs = set(used.split())
+    seen = {}
+    for line in so.splitlines():
+        try:
+            i = json.loads(line)
+        except ValueError:
+            continue
+        iid = i.get("ID", "")
+        e = seen.setdefault(iid, {"id": iid, "repo": i.get("Repository"), "tags": [], "digests": [],
+                                  "size": i.get("Size"), "created": i.get("CreatedSince")})
+        if i.get("Tag") not in (None, "<none>"):
+            e["tags"].append(f"{i['Repository']}:{i['Tag']}")
+        if i.get("Digest") not in (None, "<none>"):
+            e["digests"].append(f"{i['Repository']}@{i['Digest']}")
+    # docker ps names the image as it was started: by ID, tag or digest
+    rc3, ids, _ = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}}"], timeout=30)
+    in_use = set()
+    if ids.split():
+        rc4, so4, _ = run(["docker", "inspect", "--format", "{{.Image}}", *ids.split()], timeout=30)
+        in_use = set(so4.split())
+    for e in seen.values():
+        e["used"] = e["id"] in in_use or bool(used_refs & set(e["tags"] + e["digests"]))
+    out({"images": list(seen.values())})
+
+
+def remove_image(iid):
+    """Remove one image, only if no container (running or stopped) was made from it."""
+    if not re.match(r"^sha256:[0-9a-f]{64}$", iid):
+        return out({"rc": 1, "out": "invalid image id"})
+    rc, so, _ = run(["docker", "ps", "-a", "-q", "--filter", f"ancestor={iid}"], timeout=30)
+    if so.strip():
+        return out({"rc": 1, "out": "a container uses this image"})
+    rc, so, se = run(["docker", "rmi", "-f", iid], timeout=300)
+    out({"rc": rc, "out": (so + se)[-500:]})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -522,6 +564,10 @@ def main():
         readfile(c, args[0])
     elif cmd == "put" and args:
         putfile(c, args[0])
+    elif cmd == "images":
+        images()
+    elif cmd == "remove-image" and args:
+        remove_image(args[0])
     elif cmd == "pull-image" and args and SAFE_IMAGE.match(args[0]):
         rc, so, se = run(["docker", "pull", "-q", args[0]], timeout=3600)
         out({"rc": rc, "out": (so + se)[-500:]})

@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.18.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.19.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -306,6 +306,49 @@ def event(msg, kind="info"):
         with open(EVENTS_FILE, "a") as f:
             f.write(line + "\n")
     print(line, flush=True)
+    if kind == "error" or (kind == "warn" and "automatically" in msg):
+        alert(msg, kind)
+
+
+# ---------- alerts: a webhook (ntfy, Slack, Discord, or plain JSON) when the cluster needs a look ----------
+_alerts = {}
+
+
+def alert_payload(url, text, kind):
+    """The request for this kind of webhook: ntfy takes plain text, Slack and Discord their JSON."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    title = "vLLM Panel" + (f" · {HEAD_HOST}" if HEAD_HOST else "")
+    if "ntfy" in host:
+        return text.encode(), {"Title": title, "Priority": "high" if kind == "error" else "default",
+                               "Tags": {"error": "rotating_light", "ok": "white_check_mark"}.get(kind, "warning")}
+    if host.endswith("slack.com"):
+        return json.dumps({"text": f"*{title}*: {text}"}).encode(), {"Content-Type": "application/json"}
+    if "discord" in host:
+        return json.dumps({"content": f"**{title}**: {text}"}).encode(), {"Content-Type": "application/json"}
+    return json.dumps({"title": title, "text": text, "kind": kind, "ts": iso(now()),
+                       "panel": load_settings().get("public_url") or None}).encode(), {"Content-Type": "application/json"}
+
+
+def send_alert(url, text, kind):
+    data, headers = alert_payload(url, text, kind)
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": f"vllm-panel/{APP_VERSION}", **headers})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.status
+
+
+def alert(text, kind="warn"):
+    """Send in the background; the same text at most once every 10 minutes."""
+    url = load_settings().get("alert_url")
+    if not url or now() - _alerts.get(text, 0) < 600:
+        return
+    _alerts[text] = now()
+
+    def go():
+        try:
+            send_alert(url, redact(text), kind)
+        except Exception as e:  # noqa: BLE001 — an alert must never break the panel
+            print(json.dumps({"ts": iso(now()), "kind": "warn", "msg": f"alert not sent: {e}"}), flush=True)
+    threading.Thread(target=go, daemon=True).start()
 
 
 def events(n=100):
@@ -788,11 +831,34 @@ def auto_recover():
         save_state(s)
 
 
+_watch = {"healthy": None, "bad_polls": 0, "down_sent": 0}
+
+
+def watch_health():
+    """Alert when a cluster that answered stops answering (two polls in a row, not during an action
+    the panel runs), and when it answers again."""
+    c = STATUS.get("cluster") or {}
+    healthy = bool(c.get("healthy"))
+    bad = not healthy and c.get("state") not in ("stopped", "starting", None) and not CURRENT_ACTION["name"]
+    _watch["bad_polls"] = _watch["bad_polls"] + 1 if bad else 0
+    model = ", ".join(c.get("models") or []) or cfg()["served_model_name"] or "the model"
+    if _watch["bad_polls"] == 2 and _watch["healthy"] is not False:
+        _watch["down_sent"] = now()
+        alert(f"{model} stopped answering: {c.get('state')}" + (f" ({c.get('hung_reason')})" if c.get("hung") else "")
+              + (". Auto-recover is on." if ops()["auto_recover"] else ". Auto-recover is off."), "error")
+        _watch["healthy"] = False
+    elif healthy:
+        if _watch["healthy"] is False and _watch["down_sent"]:
+            alert(f"{model} is answering again after {dur(now() - _watch['down_sent'])}", "ok")
+        _watch["healthy"], _watch["down_sent"] = True, 0
+
+
 def poller():
     while True:
         try:
             poll_once()
             auto_recover()
+            watch_health()
         except Exception as e:  # noqa: BLE001
             event(f"polling error: {e}", "error")
         time.sleep(POLL_SECONDS)
@@ -1391,6 +1457,71 @@ def api_garage(fresh: int = 0):
             "chosen": c["served_model_name"], "agent_version": AGENT_VERSION}
 
 
+@app.post("/api/alert-test", dependencies=[Depends(auth)])
+async def api_alert_test(request: Request):
+    url = str((await request.json()).get("url") or load_settings().get("alert_url") or "").strip()
+    if not re.match(r"^https?://[^\s]+$", url):
+        raise HTTPException(400, "give a webhook URL that starts with http:// or https://")
+    try:
+        code = send_alert(url, "Test from vLLM Panel: alerts reach you here.", "ok")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"the webhook did not accept it: {redact(str(e))[:200]}")
+    return {"ok": True, "status": code}
+
+
+def image_refs(n_image):
+    """Every way an image on a node can be named, for matching against the catalog."""
+    return set(n_image.get("tags") or []) | set(n_image.get("digests") or [])
+
+
+@app.get("/api/images", dependencies=[Depends(auth)])
+def api_images():
+    """vLLM images per node: size, whether a container uses it, and which catalog models need it.
+    Without Easypanel's daily cleanup nothing removes them, and each is 30+ GB."""
+    c = cfg()
+    by_image = {}
+    for m in CATALOG.values():
+        by_image.setdefault(m.get("image"), []).append(m["name"])
+    repos = {(i or "").split("@")[0].rsplit(":", 1)[0] for i in by_image} | {(c["image"] or "").split("@")[0]}
+
+    def one(n):
+        rc, res, err = ssh(n["host"], "images", timeout=60)
+        if not res or "images" not in res:
+            return {"role": n["role"], "host": n["host"], "error": redact(str((res or {}).get("error") or err))[-200:],
+                    "agent_old": bool(res and "unknown command" in str(res.get("error")))}
+        rows = []
+        for im in res["images"]:
+            repo = im.get("repo") or ""
+            if (repo not in repos and "vllm" not in repo) or "vllmapp" in repo or "vllm-cluster-spark" in repo:
+                continue  # only vLLM images: not the panel's own, and not the node's other images
+            refs = image_refs(im)
+            needed = sorted({name for ref, names in by_image.items() if ref in refs for name in names})
+            rows.append({**im, "needed_by": needed, "chosen": c["image"] in refs,
+                         "removable": not im.get("used") and c["image"] not in refs})
+        return {"role": n["role"], "host": n["host"], "images": rows}
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        return {"nodes": list(ex.map(one, NODES))}
+
+
+@app.post("/api/remove-image", dependencies=[Depends(auth)])
+async def api_remove_image(request: Request):
+    b = await request.json()
+    host, iid = str(b.get("host") or ""), str(b.get("id") or "")
+    if host not in [n["host"] for n in NODES] or not re.match(r"^sha256:[0-9a-f]{64}$", iid):
+        raise HTTPException(400, "unknown node or image")
+    if CURRENT_ACTION["name"]:
+        raise HTTPException(409, f"{CURRENT_ACTION['name']} is running")
+    rc, res, _ = ssh(host, "images", timeout=60)
+    target = next((im for im in (res or {}).get("images") or [] if im["id"] == iid), None)
+    if target and cfg()["image"] in image_refs(target):
+        raise HTTPException(409, "that is the image of the chosen model")
+    rc, res, err = ssh(host, f"remove-image {iid}", timeout=320)
+    if not (res and res.get("rc") == 0):
+        raise HTTPException(409, redact(str((res or {}).get("out") or err))[-300:])
+    event(f"{host}: removed image {iid[7:19]}")
+    return {"ok": True}
+
+
 @app.post("/api/credentials", dependencies=[Depends(auth)])
 async def api_credentials(request: Request):
     """The Hugging Face token, set from the page. It is checked against Hugging Face before it
@@ -1468,6 +1599,7 @@ def api_status(user: str = Depends(auth)):
                 **{k: v for k, v in ops().items() if k != "locked"}, "ops_locked": ops()["locked"],
                 "public_url": load_settings().get("public_url", ""),
                 "guide": load_settings().get("guide") or {},
+                "alert_url": load_settings().get("alert_url") or "",
                 "nodes": NODES, "roce_fix": roce_fix(STATUS["cluster"].get("roce_bad") or []),
                 "state": load_state(),
                 "model": cfg(), "patchsets": list(PATCHSETS), "hf_offline": HF_OFFLINE,
@@ -1589,6 +1721,11 @@ async def api_settings(request: Request):
         if u and not re.match(r"^https?://[A-Za-z0-9.:/_-]+$", u):
             raise HTTPException(400, "the public URL must start with http:// or https://")
         upd["public_url"] = u or None
+    if "alert_url" in b:
+        u = str(b["alert_url"] or "").strip()
+        if u and not re.match(r"^https?://[^\s]+$", u):
+            raise HTTPException(400, "the alert webhook must start with http:// or https://")
+        upd["alert_url"] = u or None
     if "guide" in b:  # the getting-started guide on Overview: hidden or not
         upd["guide"] = {**(load_settings().get("guide") or {}), "hidden": bool((b["guide"] or {}).get("hidden"))}
     if "ops" in b:
@@ -1607,7 +1744,8 @@ async def api_settings(request: Request):
     save_settings(upd)
     event("settings changed: " + ", ".join(
         [f"{k}={v}" for k, v in (b.get("ops") or {}).items()] + (["public URL"] if "public_url" in b else [])
-        + (["getting-started guide " + ("hidden" if upd["guide"]["hidden"] else "shown")] if "guide" in b else [])))
+        + (["getting-started guide " + ("hidden" if upd["guide"]["hidden"] else "shown")] if "guide" in b else [])
+        + (["alert webhook"] if "alert_url" in b else [])))
     return {"ok": True, "ops": ops()}
 
 

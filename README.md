@@ -291,6 +291,18 @@ changing the head's address needs a stopped cluster. The list on the page replac
 address on wifi or the LAN port, the page says so: give the head a link address as well and
 change its address on the page before adding the second.
 
+## Images and alerts
+
+**Nodes → vLLM images on the nodes** lists the vLLM images on every node, with their size and the
+catalog models that use them, and removes the ones you no longer need. An image a container
+uses, or the chosen model's, can't be removed. Easypanel removes unused images every day; on a
+plain install nothing else does, and each one is 30+ GB.
+
+**Settings → Alert webhook** sends a message when the model stops answering, answers again, is
+restarted automatically, or a start fails. Paste an [ntfy](https://ntfy.sh) topic URL and subscribe
+to it in the ntfy app, a Slack or Discord webhook, or any URL that takes a JSON POST. **Send a test**
+checks it. The same message goes out at most once every 10 minutes.
+
 ## Keeping the cluster ports on the cluster link
 
 With two or more Sparks the nodes talk to each other on a few ports: torch distributed

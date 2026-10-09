@@ -383,6 +383,12 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
         Run it again when the Setup card says an agent is outdated.</p>
       <pre id="install">Loading…</pre></details>
   </section>
+  <section class="card" id="imagesCard">
+    <h2 style="display:flex;justify-content:space-between;align-items:baseline">vLLM images on the nodes
+      <button class="small" id="imgLoad">Show</button></h2>
+    <div id="images" class="muted">Each vLLM image is 30+ GB, and a model switch can leave the old one behind.
+      Easypanel removes unused ones every day; without Easypanel, remove them here.</div>
+  </section>
   <section class="nodes" id="nodes"></section>
   </div>
   <div class="page" data-page="logs">
@@ -1225,6 +1231,38 @@ $("#gaKeyCopy").onclick = async () => {
   setTimeout(() => $("#gaKeyCopy").textContent = "Copy", 2500);
 };
 
+// ---------- vLLM images per node ----------
+async function loadImages() {
+  $("#images").textContent = "Reading the images on every node…";
+  let d;
+  try { d = await (await fetch("api/images")).json(); } catch (e) { $("#images").textContent = String(e); return; }
+  $("#imgLoad").textContent = "Refresh";
+  $("#images").innerHTML = d.nodes.map(n => {
+    if (n.error) return `<p><b>${esc(n.role)} ${esc(n.host)}</b>: <span style="color:var(--err)">${n.agent_old
+      ? "the agent is too old to list images; install it again under Install the agent on a node" : esc(n.error)}</span></p>`;
+    const rows = n.images.map(im => {
+      const name = im.tags[0] || (im.digests[0] || im.repo || "").replace(/@sha256:(.{12}).*/, "@$1");
+      const why = im.used ? "a container uses it" : im.chosen ? "the chosen model's image" : "";
+      return `<tr><td><code>${esc(name)}</code><br><small class="muted">${esc(im.created || "")}${im.needed_by.length
+          ? " · catalog: " + esc(im.needed_by.join(", ")) : " · no catalog model uses it"}</small></td>
+        <td style="white-space:nowrap">${esc(im.size || "")}</td>
+        <td style="text-align:right">${im.removable ? `<button class="small danger" data-rmimg="${esc(n.host)}|${esc(im.id)}|${esc(name)}|${esc(im.needed_by.join(", "))}">Remove</button>`
+          : `<span class="muted">${why}</span>`}</td></tr>`;
+    }).join("") || `<tr><td class="muted" colspan="3">No vLLM images.</td></tr>`;
+    return `<h3 style="font-size:14px;margin:14px 0 4px">${esc(n.role)} · ${esc(n.host)}</h3><table class="t">${rows}</table>`;
+  }).join("") + `<p class="muted" style="margin:10px 0 0">An image a container uses, or the chosen model's, can't be removed.
+    A removed image is downloaded again by <b>Pull image</b> or the next start that needs it.</p>`;
+  document.querySelectorAll("[data-rmimg]").forEach(b => b.onclick = async () => {
+    const [host, id, name, needed] = b.dataset.rmimg.split("|");
+    if (!confirm(`Remove ${name} from ${host}?` + (needed ? `\n\n${needed} need${needed.includes(",") ? "" : "s"} it; it is downloaded again when you switch to one of them.` : ""))) return;
+    b.disabled = true; b.textContent = "Removing…";
+    const r = await fetch("api/remove-image", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({host, id})});
+    if (!r.ok) { alert((await r.json()).detail || r.status); b.disabled = false; b.textContent = "Remove"; return; }
+    loadImages();
+  });
+}
+$("#imgLoad").onclick = loadImages;
+
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;
   $("#hfState").innerHTML = !hf.set ? `<span style="color:var(--warn)">Not set.</span>`
@@ -1282,14 +1320,28 @@ function renderOps() {
     <div class="opt" style="margin-top:12px"><span style="flex:1"><b>Public URL</b><small>If you expose the API through a
       Cloudflare tunnel or a domain, e.g. <code>https://llm.example.com</code>. Shown under Use the model.</small>
       <input type="text" id="pubUrl" value="${esc(cfg.public_url || "")}" style="width:100%;margin-top:4px" placeholder="https://…"></span></div>
+    <div class="opt" style="margin-top:12px"><span style="flex:1"><b>Alert webhook</b><small>Get a message when the model stops
+      answering, answers again, is restarted automatically, or a start fails. Paste an <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
+      topic URL (for example <code>https://ntfy.sh/your-secret-topic</code>, then subscribe in the ntfy app), a Slack or Discord
+      webhook, or any URL that takes a JSON POST.</small>
+      <span class="row" style="margin-top:4px"><input type="text" id="alertUrl" value="${esc(cfg.alert_url || "")}" placeholder="https://ntfy.sh/…">
+        <button class="small" id="alertTest">Send a test</button></span><small id="alertInfo"></small></span></div>
     <div class="row"><button class="primary" id="opsSave">Save settings</button><span class="muted" id="opsInfo"></span></div>`;
   opsDrawn = true;
+  $("#alertTest").onclick = async () => {
+    $("#alertInfo").textContent = "Sending…";
+    const r = await fetch("api/alert-test", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({url: $("#alertUrl").value.trim()})});
+    const d = await r.json();
+    $("#alertInfo").innerHTML = r.ok ? `<span style="color:var(--ok)">Sent (HTTP ${d.status}). Save settings to keep it.</span>`
+      : `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`;
+  };
   $("#opsSave").onclick = async () => {
     const o = {};
     document.querySelectorAll("[data-op]:not(:disabled)").forEach(i => o[i.dataset.op] = i.checked);
     document.querySelectorAll("[data-opn]:not(:disabled)").forEach(i => o[i.dataset.opn] = i.value.trim());
     const r = await fetch("api/settings", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ops: o, public_url: $("#pubUrl").value.trim()})});
+      body: JSON.stringify({ops: o, public_url: $("#pubUrl").value.trim(), alert_url: $("#alertUrl").value.trim()})});
     const d = await r.json();
     if (!r.ok) return alert(d.detail || r.status);
     $("#opsInfo").textContent = "Saved. Applies right away.";
