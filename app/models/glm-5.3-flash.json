@@ -10,9 +10,9 @@
   "min_nodes": 2,
   "status": "verified",
   "gpu_mem_util": "0.83",
-  "max_model_len": "262144",
+  "max_model_len": "131072",
   "patchset": "glm-5.3-flash-nvfp4",
   "vllm_args": "--trust-remote-code --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm47 --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Verified on 2 × DGX Spark 2026-09-28: 256k context, ~344k tokens KV cache at 0.83. Needs its patch set, which is tied to this image digest. Lower GPU memory makes the worker run out of KV cache at 256k.",
+  "notes": "Verified on 2 × DGX Spark: 256k context with ~344k tokens of KV cache at 0.83 (2026-09-28), then run at 128k from 2026-10-02, after lower GPU shares (0.80, 0.82) left the worker short of KV cache at 256k. 128k is the default here; raise it under Deployment only with 0.83 or more. Needs its patch set, which is tied to this image digest, and runs on Ray.",
   "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
 }

@@ -13,6 +13,6 @@
   "gpu_mem_util": "0.80",
   "max_model_len": "131072",
   "vllm_args": "--trust-remote-code --enable-auto-tool-choice --tool-call-parser muse_glimmer --reasoning-parser muse_glimmer --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Meta's open-weight model for local agents, distilled from Muse Spark. Mamba hybrid with vision, 128k context, Apache 2.0. NVIDIA's own NVFP4 build, settings from its model card. Fits on one Spark; here it runs across the cluster.",
+  "notes": "Meta's open-weight model for local agents, distilled from Muse Spark. Mamba hybrid with vision, 128k context, Apache 2.0. NVIDIA's own NVFP4 build, settings from its model card. Fits on one Spark; with two it is split across both.",
   "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
 }
