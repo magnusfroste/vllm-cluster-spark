@@ -280,6 +280,27 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
 .ofgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 14px; margin-top: 8px; }
 .dlg select { margin-top: 4px; }
 @media (max-width: 640px) { .ofgrid, .mfacts { grid-template-columns: 1fr 1fr; } }
+.dephead .dhrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.dtitle { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.dtitle .dot { width: 10px; height: 10px; }
+#dSub { margin-top: 4px; }
+.dtabs { display: flex; gap: 4px; margin: 16px -20px -18px; padding: 0 16px; border-top: 1px solid var(--line); }
+.dtabs button, .dtabs a { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none;
+                          padding: 11px 12px; color: var(--muted); font-weight: 500; font-size: 14px; }
+.dtabs button:hover:not(:disabled) { color: var(--fg); border-color: transparent; }
+.dtabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+.dtabs a { margin-left: auto; }
+.field select { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.field textarea, .envbox { width: 100%; margin-top: 4px; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px;
+                           border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); resize: vertical; }
+.tpl { display: block; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+.tpl.diff { color: var(--warn); }
+.savebar { margin-top: 14px; }
+.depwhat { margin: 4px 0 12px; padding: 12px 14px; border-radius: 12px; line-height: 1.55;
+           background: color-mix(in srgb, var(--accent) 7%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.ovgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 22px; }
+.ovgrid b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 2px; }
+.ovgrid code { word-break: break-all; }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -297,6 +318,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
       <a class="navitem" data-nav="logs" href="#logs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Logs</span><span class="navbadge" id="nb-logs"></span></a>
       <a class="navitem" data-nav="events" href="#events"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Events</span><span class="navbadge" id="nb-events"></span></a>
       <div class="navgroup">models</div>
+      <a class="navitem" data-nav="deployment" href="#deployment"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4zM8 17v3m8-3v3M7 11h4" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"/></svg><span>Deployment</span><span class="navbadge" id="nb-deployment"></span></a>
       <a class="navitem" data-nav="models" href="#models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Models</span><span class="navbadge" id="nb-models"></span></a>
       <a class="navitem" data-nav="api" href="#api"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9l-4 3 4 3m8-6l4 3-4 3M14 5l-4 14" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>API</span><span class="navbadge" id="nb-api"></span></a>
       <a class="navitem" data-nav="usage" href="#usage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2" stroke="currentColor" fill="none" stroke-width="2"/></svg><span>Usage</span><span class="navbadge" id="nb-usage"></span></a>
@@ -352,7 +374,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   </section>
   <div class="dash">
     <section class="card tilecard"><h2>Load now <a href="#api">API →</a></h2><div id="dLoad" class="muted">…</div></section>
-    <section class="card tilecard"><h2>Model <a href="#models">Models →</a></h2><div id="dModel" class="muted">…</div></section>
+    <section class="card tilecard"><h2>Model <a href="#deployment">Deployment →</a></h2><div id="dModel" class="muted">…</div></section>
     <section class="card tilecard"><h2>Nodes <a href="#nodes">Nodes →</a></h2><div id="dNodes" class="muted">…</div></section>
     <section class="card tilecard"><h2>Today <a href="#usage">Usage →</a></h2><div id="dToday" class="muted">…</div></section>
     <section class="card tilecard"><h2>Latest events <a href="#events">Events →</a></h2><div id="dEvents" class="muted">…</div></section>
@@ -420,24 +442,47 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     <div class="ev" id="events"></div>
   </section>
   </div>
-  <div class="page" data-page="models">
-    <div class="pagehead"><h1>Models</h1><span class="muted">Pick, download and manage models</span></div>
-  <section class="card" id="modelCard">
-    <h2>Model</h2>
-    <div id="modelHead" class="muted">Loading…</div>
-    <div class="models" id="models"></div>
-    <details style="margin-top:10px"><summary>Advanced</summary>
-      <div class="row" style="margin-top:8px">
-        <label class="field">GPU memory share (0.30–0.95)<input type="text" id="mGpu" size="6"></label>
-        <label class="field">Max context (tokens)<input type="text" id="mLen" size="10"></label>
-        <span class="muted" style="font-size:12px;max-width:420px">Lower the GPU share if a node runs short of system
-          memory; lower the context if vLLM says the KV cache is too small.</span>
-      </div>
-    </details>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" id="mSave">Use this model</button>
-      <span class="muted" id="mInfo"></span>
+  <div class="page" data-page="deployment">
+    <div class="pagehead"><h1>Deployment</h1><span class="muted">The model that runs here, and its configuration</span></div>
+  <section class="card dephead">
+    <div class="dhrow">
+      <div style="min-width:0"><div class="dtitle"><span class="dot" id="dDot"></span><span id="dName">…</span></div>
+        <div class="muted" id="dSub"></div></div>
+      <div class="btns"><button class="primary" id="dRedeploy">Redeploy</button><button id="dStop">Stop</button>
+        <a class="btn" href="#models">Change model</a></div>
     </div>
+    <div id="dNote"></div>
+    <nav class="dtabs"><button data-dtab="overview" class="on">Overview</button><button data-dtab="config">Configuration</button>
+      <button data-dtab="env">Environment</button><a href="#logs">Logs ↗</a></nav>
+  </section>
+  <section class="card" data-dpane="overview"><div id="dOverview" class="muted">Loading…</div></section>
+  <section class="card" data-dpane="config" hidden>
+    <p class="muted" style="margin:0 0 6px">This deployment's settings. They start as the model's template; what you change is
+      kept for this deployment, and <b>Reset to the template</b> drops it.</p>
+    <div class="ofgrid">
+      <label class="field">GPU memory share (0.30–0.95)<input type="text" id="cGpu"><small class="tpl" id="tGpu"></small></label>
+      <label class="field">Max context (tokens)<input type="text" id="cLen"><small class="tpl" id="tLen"></small></label>
+      <label class="field">vLLM image<input type="text" id="cImage"><small class="tpl" id="tImage"></small></label>
+      <label class="field">Nodes join with<select id="cExec"><option value="mp">mp (vLLM's own, no Ray)</option><option value="ray">ray</option></select><small class="tpl" id="tExec"></small></label>
+    </div>
+    <label class="field">Extra vLLM arguments<textarea id="cArgs" rows="4" spellcheck="false"></textarea><small class="tpl" id="tArgs"></small></label>
+    <div class="row savebar"><button class="primary" data-dsave="redeploy">Save &amp; Redeploy</button><button data-dsave="save">Save</button>
+      <span class="muted" data-dinfo></span></div>
+  </section>
+  <section class="card" data-dpane="env" hidden>
+    <p class="muted" style="margin:0 0 6px">Environment variables for the vLLM containers, one <code>NAME=value</code> per line. The panel sets
+      the API key, the Hugging Face token and the network settings itself.</p>
+    <textarea id="cEnv" rows="10" spellcheck="false" class="envbox"></textarea>
+    <small class="tpl" id="tEnv"></small>
+    <div class="row savebar"><button class="primary" data-dsave="redeploy">Save &amp; Redeploy</button><button data-dsave="save">Save</button>
+      <span class="muted" data-dinfo></span></div>
+  </section>
+  </div>
+  <div class="page" data-page="models">
+    <div class="pagehead"><h1>Models</h1><span class="muted">The model library: deploy one, or add your own</span></div>
+  <section class="card" id="modelCard">
+    <div id="modelHead" class="muted" style="margin-bottom:4px"></div>
+    <div class="models" id="models"></div>
   </section>
   <section class="card">
     <h2>Models on disk</h2>
@@ -540,6 +585,26 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   </div>
 </div>
 <div id="tip"></div>
+<dialog id="depDialog" class="dlg dlg-wide">
+  <form method="dialog" id="depForm">
+    <h3 id="depTitle">Deploy</h3>
+    <div id="depWhat" class="depwhat"></div>
+    <details id="depAdv"><summary>Settings before it starts (the template's are filled in)</summary>
+      <div class="ofgrid">
+        <label class="field">GPU memory share<input type="text" id="pGpu"></label>
+        <label class="field">Max context (tokens)<input type="text" id="pLen"></label>
+        <label class="field">vLLM image<input type="text" id="pImage"></label>
+        <label class="field">Nodes join with<select id="pExec"><option value="mp">mp (vLLM's own, no Ray)</option><option value="ray">ray</option></select></label>
+      </div>
+      <label class="field">Extra vLLM arguments<textarea id="pArgs" rows="3" spellcheck="false"></textarea></label>
+      <label class="field">Environment variables, one NAME=value per line<textarea id="pEnv" rows="3" spellcheck="false"></textarea></label>
+      <small class="muted">You can change all of this later under Deployment.</small>
+    </details>
+    <div id="depInfo" class="muted" style="min-height:20px;margin-top:8px"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button value="cancel" formnovalidate>Cancel</button><button class="primary" value="deploy" id="depGo">Deploy</button></div>
+  </form>
+</dialog>
 <dialog id="ownDialog" class="dlg dlg-wide">
   <form method="dialog" id="ownForm">
     <h3 id="ownTitle">Add your own model</h3>
@@ -814,6 +879,7 @@ function render() {
   if (!opsDrawn) renderOps();
   renderCreds();
   renderSparks();
+  drawDeployment();
   if (M) drawModels(true);  // header only: running model and pending restart
   $("#cfg").innerHTML = `Mode <b>${esc(cfg.mode)}</b> · cluster dir <code>${esc(cfg.cluster_dir)}</code> · SSH as <code>${esc(cfg.ssh_user)}</code><br>
     Auto-recover <b>${cfg.auto_recover ? "on" : "off"}</b> (hang: no log line for ${cfg.stall_timeout_min} min, not ready after ${cfg.hang_timeout_min} min, or unhealthy ${cfg.unhealthy_grace_min} min after ready; max ${cfg.max_auto_restarts} restart(s)${cfg.allow_reboot && cfg.auto_reboot ? ", then reboot" : ""}) ·
@@ -1017,7 +1083,7 @@ function renderGuide(todo) {
     {t: "Pick a model", req: true, done: !st.no_model,
      d: !st.no_model ? esc(name) : rec ? `Recommended for ${n === 1 ? "one Spark" : n + " Sparks"}: ${esc(rec.name)}${rec.status === "verified" ? "" : " (not yet verified on DGX Spark)"}.`
         : `Choose one in the library; the verified ones are tested on ${n === 1 ? "one Spark" : n + " Sparks"} or more.`,
-     a: st.no_model ? (rec ? B("Use " + esc(rec.name.split(" (")[0]), `guidePick('${esc(rec.id)}')`, true) : "") + B("Browse models", "location.hash='#models'") : ""},
+     a: st.no_model ? (rec ? B("Use " + esc(rec.name.split(" (")[0]), `openDeploy('${esc(rec.id)}')`, true) : "") + B("Browse models", "location.hash='#models'") : ""},
     {t: "Download it to every Spark", req: true, done: !!st.model_ready,
      d: st.model_ready ? "On disk on every node." : dl.length ? `Downloading${pct != null ? `: ${pct} %` : "…"} It continues if you close the page.`
         : st.size ? `${(st.size / 1e9).toFixed(1)} GB per node.` : "",
@@ -1052,11 +1118,6 @@ async function guideHidden(h) {
 }
 $("#guideHide").onclick = () => guideHidden(true);
 $("#guideShow").onclick = e => { e.preventDefault(); guideHidden(false); };
-async function guidePick(id) {
-  const r = await fetch("api/model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id})});
-  if (!r.ok) return alert((await r.json()).detail || r.status);
-  await loadModels(); await refresh();
-}
 async function guideTest() {
   guideAnswer = "Asking: What is the capital of Sweden, and what is 17*23?…"; renderGuide(0);
   try {
@@ -1422,6 +1483,133 @@ async function deleteOwn(id) {
   await loadModels();
 }
 
+// ---------- Deployment: the model that runs, its own configuration, Save & Redeploy ----------
+let dTab = "overview", dDirty = false;
+document.querySelectorAll("[data-dtab]").forEach(b => b.onclick = () => {
+  dTab = b.dataset.dtab;
+  document.querySelectorAll("[data-dtab]").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll("[data-dpane]").forEach(x => x.hidden = x.dataset.dpane !== dTab);
+});
+const envText = e => Object.entries(e || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+function drawDeployment(force) {
+  if (!M || !S) return;
+  const cur = M.current, e = cur.entry || {}, c = S.cluster || {}, st = S.setup || {};
+  const busy = S.action?.name, up = (S.nodes || []).some(n => n.container?.running);
+  const cls = c.healthy ? "ok" : c.state === "starting" ? "warn" : up ? "err" : "";
+  $("#dDot").className = "dot " + cls;
+  $("#dName").textContent = e.name || cur.model || "No model deployed";
+  $("#dSub").textContent = !cur.model ? "Pick one in the model library and press Deploy." : [
+    c.healthy ? "Responding" : c.state === "starting" ? `Starting: ${c.phase || "…"}` : up ? (c.state || "not answering") : "Stopped",
+    c.healthy && c.uptime_s != null ? `up ${dur(c.uptime_s)}` : "",
+    `${(S.config.nodes || []).length} ${(S.config.nodes || []).length === 1 ? "Spark" : "Sparks"}`,
+    cur.changed?.length ? `own changes: ${cur.changed.join(", ")}` : "the template's settings"].filter(Boolean).join(" · ");
+  $("#dRedeploy").textContent = up ? "Redeploy" : "Deploy";
+  $("#dRedeploy").disabled = !!busy || !cur.model;
+  $("#dStop").disabled = !!busy || !up;
+  const pend = st.pending && !busy;
+  const wait = S.config.state?.deploy_when_ready || 0;
+  $("#dNote").innerHTML = busy ? `<div class="next" style="margin-top:12px"><b>${esc(busy)} is running…</b></div>`
+    : st.nodes?.some(n => n.downloading) ? `<div class="next" style="margin-top:12px"><b>Downloading the model.</b>
+        <span class="muted">It starts on its own when every Spark has it.</span></div>`
+    : pend ? `<div class="warnbox">Saved changes that are not running yet. <b>Redeploy</b> to apply them; the API is down for a few minutes.</div>`
+    : (cur.locked || []).length ? `<div class="warnbox">${esc(cur.locked.join(", "))} come from the panel's env and can't be changed here.</div>` : "";
+  // Overview tab
+  const base = S.config.public_url ? S.config.public_url.replace(/\/$/, "") + "/v1" : `http://${S.config.head}:${S.config.port || 8000}/v1`;
+  $("#dOverview").innerHTML = !cur.model ? `<p style="margin:0">Nothing is deployed. <a href="#models">Open the model library</a>.</p>` :
+    `<div class="ovgrid">
+      <div><b>API</b><code>${esc(base)}</code></div>
+      <div><b>Model name for clients</b><code>${esc(cur.served_model_name)}</code></div>
+      <div><b>Template</b>${esc(e.name || "")} <span class="badge ${e.own ? "run" : e.status}">${e.own ? "Own" : e.status === "verified" ? "Verified" : "Untested"}</span></div>
+      <div><b>Max context</b>${cur.max_model_len ? (+cur.max_model_len).toLocaleString("en-US") + " tokens" : "the model's own"}</div>
+      <div><b>KV cache</b>${c.kv_tokens ? c.kv_tokens.toLocaleString("en-US") + " tokens" + (c.concurrency ? ` · ${c.concurrency.x}x at full context` : "") : "–"}</div>
+      <div><b>Load now</b>${S.load ? `${S.load.running} running · ${S.load.waiting} waiting · ${Math.round(S.load.gen_tps)} tok/s out` : "–"}</div>
+      <div><b>vLLM</b>${esc((c.vllm_version || "–").replace(/\+.*/, ""))}</div>
+      <div><b>Image</b><code>${esc(cur.image || "")}</code></div>
+    </div>
+    ${cur.changed?.length ? `<div class="row" style="margin-top:14px"><span class="muted">This deployment differs from the template in: ${esc(cur.changed.join(", "))}.</span>
+      <button class="small" id="dReset">Reset to the template</button></div>` : ""}`;
+  const rs = $("#dReset"); if (rs) rs.onclick = () => saveDeployment(true, true);
+  // the forms: filled from what is in effect, unless the admin is editing them
+  if (force || !dDirty) {
+    $("#cGpu").value = cur.gpu_mem_util || ""; $("#cLen").value = cur.max_model_len || "";
+    $("#cImage").value = cur.image || ""; $("#cExec").value = cur.executor || "ray";
+    $("#cArgs").value = cur.vllm_args || ""; $("#cEnv").value = envText(cur.env);
+    dDirty = false;
+  }
+  const tpl = (id, v, now) => { const el = $(id); el.textContent = `Template: ${v || "–"}`; el.classList.toggle("diff", String(v || "") !== String(now || "")); };
+  tpl("#tGpu", e.gpu_mem_util, $("#cGpu").value); tpl("#tLen", e.max_model_len, $("#cLen").value);
+  tpl("#tImage", e.image, $("#cImage").value); tpl("#tExec", e.executor || "ray", $("#cExec").value);
+  tpl("#tArgs", e.vllm_args, $("#cArgs").value);
+  $("#tEnv").textContent = `Template: ${envText(e.env).replace(/\n/g, "  ") || "none"}`;
+  $("#tEnv").classList.toggle("diff", envText(e.env).trim() !== $("#cEnv").value.trim());
+  document.querySelectorAll("[data-dsave]").forEach(b => b.disabled = !!busy || !cur.model);
+}
+["#cGpu", "#cLen", "#cImage", "#cExec", "#cArgs", "#cEnv"].forEach(s => $(s).addEventListener("input", () => { dDirty = true; drawDeployment(); }));
+async function saveDeployment(redeploy, reset) {
+  const cur = M.current;
+  if (redeploy && !confirm(reset ? "Go back to the template's settings and redeploy? The API is down for a few minutes."
+      : "Save and redeploy? The API is down for a few minutes while the model restarts.")) return;
+  const body = reset ? {id: cur.id, reset: true, deploy: redeploy} : {id: cur.id, deploy: redeploy,
+    gpu_mem_util: $("#cGpu").value.trim(), max_model_len: $("#cLen").value.trim(), image: $("#cImage").value.trim(),
+    executor: $("#cExec").value, vllm_args: $("#cArgs").value, env: $("#cEnv").value};
+  const r = await fetch("api/deploy", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const d = await r.json();
+  document.querySelectorAll("[data-dinfo]").forEach(x => x.innerHTML = r.ok
+    ? `<span style="color:var(--ok)">${redeploy ? "Saved; redeploying." : "Saved. Redeploy to apply."}</span>`
+    : `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`);
+  if (!r.ok) return;
+  dDirty = false;
+  await loadModels(); await refresh(); drawDeployment(true);
+}
+document.querySelectorAll("[data-dsave]").forEach(b => b.onclick = () => saveDeployment(b.dataset.dsave === "redeploy"));
+$("#dRedeploy").onclick = async () => {
+  const up = (S.nodes || []).some(n => n.container?.running);
+  if (!confirm(up ? "Redeploy? The model restarts and the API is down for a few minutes." : "Deploy the model now?")) return;
+  const r = await fetch("api/action/deploy", {method: "POST"});
+  if (!r.ok) alert((await r.json()).detail || r.status);
+  refresh();
+};
+$("#dStop").onclick = () => act("stop");
+
+// ---------- Deploy from the library ----------
+let depId = null;
+function onDisk(repo) {
+  const ns = S?.setup?.nodes || [];
+  return ns.length && ns.every(n => (n.models || []).some(x => x.repo === repo && !x.partial && x.bytes > 0));
+}
+function openDeploy(id) {
+  const m = M.catalog.find(x => x.id === id); if (!m) return;
+  depId = id;
+  const same = M.current.id === id, cur = same ? M.current : m;
+  const up = (S?.nodes || []).some(n => n.container?.running), n = (S?.config?.nodes || []).length;
+  $("#depTitle").textContent = `Deploy ${m.name}`;
+  const runningName = M.current.entry?.name;
+  const disk = onDisk(m.model);
+  $("#depWhat").innerHTML = (disk ? `It is already on ${n === 1 ? "this Spark" : `all ${n} Sparks`}. `
+      : `First it downloads ${m.size_gb ? m.size_gb + " GB" : "the model"} to ${n === 1 ? "this Spark" : `each of the ${n} Sparks`}; the running model keeps answering meanwhile. `)
+    + (up ? `Then <b>${esc(runningName || "the running model")} stops</b>, and the API is down until ${esc(m.name)} answers, usually a few minutes.`
+      : disk ? `It starts right away.` : `Then it starts on its own.`);
+  $("#pGpu").value = cur.gpu_mem_util || ""; $("#pLen").value = cur.max_model_len || "";
+  $("#pImage").value = cur.image || ""; $("#pExec").value = cur.executor || "ray";
+  $("#pArgs").value = cur.vllm_args || ""; $("#pEnv").value = envText(cur.env);
+  $("#depAdv").open = false; $("#depInfo").textContent = "";
+  $("#depDialog").showModal();
+}
+$("#depForm").addEventListener("submit", async e => {
+  if (e.submitter?.value !== "deploy") return;
+  e.preventDefault();
+  $("#depGo").disabled = true; $("#depInfo").textContent = "Starting…";
+  const r = await fetch("api/deploy", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({
+    id: depId, deploy: true, gpu_mem_util: $("#pGpu").value.trim(), max_model_len: $("#pLen").value.trim(),
+    image: $("#pImage").value.trim(), executor: $("#pExec").value, vllm_args: $("#pArgs").value, env: $("#pEnv").value})});
+  const d = await r.json();
+  $("#depGo").disabled = false;
+  if (!r.ok) { $("#depInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
+  $("#depDialog").close();
+  dDirty = false; await loadModels(); await refresh();
+  location.hash = "#deployment";
+});
+
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;
   $("#hfState").innerHTML = !hf.set ? `<span style="color:var(--warn)">Not set.</span>`
@@ -1617,21 +1805,16 @@ async function loadModels() {
 function drawModels(headOnly) {
   const cur = M.current, running = S?.cluster?.models || [];
   const locked = cur.locked.length;
-  $("#modelHead").innerHTML = (cur.model
-      ? `Chosen: <b>${esc(cur.entry.name || cur.model)}</b>` : `No model chosen yet — pick one below.`)
-    + (running.length ? ` · running now: <b>${esc(running.join(", "))}</b>` : "")
-    + (S?.setup?.pending ? ` · <span class="badge untested">Restart to apply</span>` : "")
-    + (locked ? `<div class="warnbox">${esc(cur.locked.map(k => ({model:"MODEL",served_model_name:"SERVED_MODEL_NAME",image:"VLLM_IMAGE",
-        gpu_mem_util:"GPU_MEM_UTIL",max_model_len:"MAX_MODEL_LEN",vllm_args:"VLLM_EXTRA_ARGS",revision:"MODEL_REVISION"})[k]).join(", "))}
-        ${locked > 1 ? "are" : "is"} set in the app's env and override${locked > 1 ? "" : "s"} the choice here. Remove ${locked > 1 ? "them" : "it"} there to choose here.</div>` : "");
+  $("#modelHead").innerHTML = cur.model
+    ? `Deployed: <b>${esc(cur.entry.name || cur.model)}</b>${running.length ? "" : " (not running)"} · <a href="#deployment">its configuration →</a>`
+    : `Nothing deployed yet. Pick a model and press <b>Deploy</b>.`;
   if (headOnly) return;
   const tooBig = id => (M.catalog.find(m => m.id === id)?.min_nodes || 1) > (M.nodes || 1);
   const nodes = M.nodes || 1;
   const fmtLen = n => !n ? "–" : +n >= 1048576 ? (+n / 1048576) + "M" : Math.round(+n / 1024) + "k";
   const badge = m => m.own ? `<span class="badge run">Own</span>` : `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`;
   // one card per model, the same fields for every one; the long notes and the settings behind "Read more"
-  const card = m => `<label class="mcard ${pick === m.id ? "sel" : ""} ${tooBig(m.id) ? "off" : ""}">
-      <input type="radio" name="m" value="${esc(m.id)}" ${pick === m.id ? "checked" : ""} ${tooBig(m.id) ? "disabled" : ""}>
+  const card = m => `<div class="mcard ${cur.id === m.id ? "sel" : ""} ${tooBig(m.id) ? "off" : ""}">
       <div class="mtop"><b>${esc(m.name)}</b><span class="mbadges">${badge(m)}
         ${(m.recommended_for || []).includes(nodes) ? `<span class="badge verified">Recommended</span>` : ""}
         ${cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : ""}</span></div>
@@ -1643,16 +1826,18 @@ function drawModels(headOnly) {
         <div><span>Context</span>${fmtLen(m.max_model_len)}</div><div><span>Speed</span>${esc(m.speed || "not measured")}</div>
       </div>
       <div class="mfoot"><a href="https://huggingface.co/${esc(m.model)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Hugging Face ↗</a>
-        <button type="button" class="small" onclick="event.preventDefault();this.closest('.mcard').querySelector('.mmore').toggleAttribute('hidden')">Read more</button>
-        ${m.own ? `<button type="button" class="small" onclick="event.preventDefault();openOwn('${esc(m.id)}')">Edit</button>
-          <button type="button" class="small danger" onclick="event.preventDefault();deleteOwn('${esc(m.id)}')">Remove</button>` : ""}</div>
+        <button type="button" class="small" onclick="this.closest('.mcard').querySelector('.mmore').toggleAttribute('hidden')">Read more</button>
+        ${cur.id === m.id ? `<a class="btn small" href="#deployment">Configure</a>`
+          : `<button type="button" class="small primary" ${tooBig(m.id) ? "disabled" : ""} onclick="openDeploy('${esc(m.id)}')">Deploy</button>`}
+        ${m.own ? `<button type="button" class="small" onclick="openOwn('${esc(m.id)}')">Edit</button>
+          <button type="button" class="small danger" onclick="deleteOwn('${esc(m.id)}')">Remove</button>` : ""}</div>
       <div class="mmore" hidden>${m.notes ? `<p>${esc(m.notes)}</p>` : ""}
         <dl><dt>Repo</dt><dd><code>${esc(m.model)}</code></dd><dt>Name for clients</dt><dd><code>${esc(m.served_model_name || "")}</code></dd>
         <dt>Image</dt><dd><code>${esc(m.image || "")}</code></dd><dt>Nodes join with</dt><dd>${esc(m.executor || "ray")}</dd>
         <dt>GPU memory share</dt><dd>${esc(m.gpu_mem_util || "–")}</dd>
         <dt>vLLM arguments</dt><dd><code>${esc(m.vllm_args || "–")}</code></dd>
         ${Object.keys(m.env || {}).length ? `<dt>Environment</dt><dd><code>${esc(Object.entries(m.env).map(([k, v]) => k + "=" + v).join(" "))}</code></dd>` : ""}</dl></div>
-    </label>`;
+    </div>`;
   const group = (title, list) => list.length ? `<div class="mgroup">${title}</div>` + list.map(card).join("") : "";
   const ready = M.catalog.filter(m => !m.own), mine = M.catalog.filter(m => m.own);
   const one = ready.filter(m => m.min_nodes <= 1), more = ready.filter(m => m.min_nodes > 1);
@@ -1666,22 +1851,8 @@ function drawModels(headOnly) {
     + `<button type="button" class="mcard madd" onclick="openOwn()"><b>+ Add your own model</b>
         <span class="muted">Any Hugging Face repo vLLM supports, with your own image, arguments and environment —
         or paste a docker compose file you already run.</span></button>`;
-  const e = M.catalog.find(m => m.id === pick) || {};
-  const same = pick === M.settings.id;
-  $("#mGpu").value = (same && M.settings.gpu_mem_util) || e.gpu_mem_util || "";
-  $("#mLen").value = (same && M.settings.max_model_len) || e.max_model_len || "";
-  document.querySelectorAll("input[name=m]").forEach(r => r.addEventListener("change", () => { pick = r.value; drawModels(); }));
+  drawDeployment();
 }
-$("#mSave").addEventListener("click", async () => {
-  if (!pick) return alert("Pick a model first.");
-  const body = {id: pick, gpu_mem_util: $("#mGpu").value.trim(), max_model_len: $("#mLen").value.trim()};
-  const r = await fetch("api/model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  const d = await r.json();
-  if (!r.ok) return alert(d.detail || r.status);
-  $("#mInfo").textContent = "Saved. Download the model under Setup, then press Restart.";
-  await loadModels(); refresh();
-});
-
 async function act(a) {
   if (CONFIRM[a] && !confirm(CONFIRM[a])) return;
   const r = await fetch(`api/action/${a}`, {method: "POST"});

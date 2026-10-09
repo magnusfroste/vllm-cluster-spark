@@ -64,7 +64,8 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
 | | **Logs** | The vLLM container log of each node, live, with a filter |
 | | **Events** | What the panel and the cluster did: starts, config writes, downloads, automatic restarts |
-| **Models** | **Models** | The model library with one card per model, your own templates (also from a docker compose file); download on every node at once; the models on disk, with Delete |
+| **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy** |
+| | **Models** | The model library: one card per model with **Deploy**, your own templates (also from a docker compose file), and the models on disk |
 | | **API** | The API addresses, model name and key, examples for curl, Python and OpenCode, and a test prompt |
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
 | | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
@@ -276,6 +277,20 @@ OpenAI-compatible, so most tools work with those three values.
 per kWh. The panel reads vLLM's token counters and each node's GPU power every poll and keeps
 them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
 disks; set **Other power per node** under **Settings**, from a wall meter, to count the whole box.
+
+## Deploying a model, and changing it later
+
+In **Models**, press **Deploy** on a card. A dialog says what will happen — whether it downloads
+first, and that the running model stops — and has the template's settings filled in if you want
+to change something before it starts. One press does it all: if the model isn't on every Spark
+yet, the panel downloads it (the running model keeps answering meanwhile) and starts it when it
+is there.
+
+**Deployment** is the page for what runs, much like an app's page in Easypanel or AgentHotel:
+**Redeploy**, **Stop**, **Change model**, and tabs. **Configuration** and **Environment** start
+as the model's template; what you change is kept for this deployment and marked against the
+template, and **Save & Redeploy** applies it (**Save** alone keeps it for the next restart).
+**Reset to the template** drops your changes. The templates themselves stay as they are.
 
 ## Model cards and your own models
 

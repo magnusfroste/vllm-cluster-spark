@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.21.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.22.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -195,12 +195,18 @@ def cfg():
              or None)
     entry = entry or {}
     c = {"id": entry.get("id"), "entry": entry, "locked": []}
+    # The deployment's own changes (Deployment page) go on top of the template; the template stays as it is.
+    ov = (st.get("overrides") or {}) if st.get("id") == entry.get("id") else {}
+    c["changed"] = sorted(k for k in ("gpu_mem_util", "max_model_len") if st.get(k) and st.get("id") == entry.get("id")
+                          and str(st[k]) != str(entry.get(k) or "")) + sorted(k for k in ov if ov[k] != entry.get(k))
     for k, e in MODEL_KEYS.items():
         v = env(e)
         if v:
             c["locked"].append(k)
         elif k in ("gpu_mem_util", "max_model_len") and st.get(k) and st.get("id") == entry.get("id"):
             v = str(st[k])
+        elif k in ("vllm_args", "image") and k in ov:
+            v = str(ov[k])
         else:
             v = str(entry.get(k) or "")
         c[k] = v
@@ -210,8 +216,9 @@ def cfg():
                      ) if PATCHES == "auto" else None if PATCHES in ("", "none") else PATCHES
     # How the nodes are joined: "ray" (the image has Ray) or "mp" (vLLM's own multi-node mode,
     # for images without Ray). And extra environment variables the model needs in the container.
-    c["executor"] = entry.get("executor", "ray")
-    c["env"] = {k: str(v) for k, v in (entry.get("env") or {}).items() if re.match(r"^[A-Z_][A-Z0-9_]*$", k)}
+    c["executor"] = ov.get("executor") or entry.get("executor", "ray")
+    c["env"] = {k: str(v) for k, v in (ov["env"] if "env" in ov else entry.get("env") or {}).items()
+                if re.match(r"^[A-Z_][A-Z0-9_]*$", k)}
     if not c["revision"]:
         c["revision"] = (PATCHSETS.get(c["patchset"]) or {}).get("revision", "")
     if c["model"] and not c["image"]:  # a custom model runs on the image of the verified entries
@@ -869,6 +876,7 @@ def poller():
             poll_once()
             auto_recover()
             watch_health()
+            deploy_when_ready()
         except Exception as e:  # noqa: BLE001
             event(f"polling error: {e}", "error")
         time.sleep(POLL_SECONDS)
@@ -1058,13 +1066,47 @@ def do_download():
             raise RuntimeError("the download did not start on every node")
 
 
+def do_deploy():
+    """One button: if the model isn't on every node yet, download it and start when it is there
+    (the poller does that); otherwise restart, or start when nothing runs."""
+    st = STATUS.get("setup") or {}
+    if not st.get("model_ready"):
+        do_download()
+        s = load_state()
+        s["deploy_when_ready"] = now()
+        save_state(s)
+        event("the model is downloading; the panel starts it when every node has it")
+        return
+    if cluster_running():
+        do_restart()
+    else:
+        do_start()
+
+
+def deploy_when_ready():
+    """Finish a Deploy that had to download first."""
+    s = load_state()
+    if not s.get("deploy_when_ready") or CURRENT_ACTION["name"]:
+        return
+    st = STATUS.get("setup") or {}
+    nodes = st.get("nodes") or []
+    if st.get("model_ready"):
+        s.pop("deploy_when_ready")
+        save_state(s)
+        start_action("restart" if cluster_running() else "start")
+    elif nodes and not any(n.get("downloading") for n in nodes) and any(n.get("download_failed") for n in nodes):
+        s.pop("deploy_when_ready")
+        save_state(s)
+        event("the download failed, so the model was not started; see Nodes", "error")
+
+
 def do_download_stop():
     on_nodes(NODES, "download-stop", timeout=90)
 
 
 ACTIONS = {"start": do_start, "stop": do_stop, "restart": do_restart,
            "reboot": do_reboot, "pull": do_pull,
-           "download": do_download, "download-stop": do_download_stop}
+           "download": do_download, "download-stop": do_download_stop, "deploy": do_deploy}
 
 
 def start_action(name, auto=False):
@@ -1474,6 +1516,86 @@ PANEL_FLAGS = {"--host", "--port", "--api-key", "--served-model-name", "--gpu-me
 PANEL_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "VLLM_API_KEY", "HF_HUB_OFFLINE"}
 
 
+def check_args(args):
+    try:
+        toks = shlex.split(args)
+    except ValueError as e:
+        raise HTTPException(400, f"the vLLM arguments don't parse: {e}")
+    taken = sorted({t.split("=")[0] for t in toks if t.split("=")[0] in PANEL_FLAGS})
+    if taken:
+        raise HTTPException(400, f"the panel sets these itself, from its own fields: {', '.join(taken)}")
+    if any(" " in t for t in toks):
+        raise HTTPException(400, "an argument contains a space; write JSON values without spaces")
+    return args
+
+
+def parse_env(text):
+    envs = {}
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        k, sep, v = line.partition("=")
+        k = k.strip()
+        if not sep or not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
+            raise HTTPException(400, f"environment lines look like NAME=value: {line[:60]}")
+        if k in PANEL_ENV:
+            raise HTTPException(400, f"{k} is set by the panel")
+        envs[k] = v.strip()
+    return envs
+
+
+@app.post("/api/deploy", dependencies=[Depends(auth)])
+async def api_deploy(request: Request):
+    """Choose a model with this deployment's settings (the template's values are the starting point;
+    what differs is kept as the deployment's own change), and optionally deploy it right away."""
+    b = await request.json()
+    mid = b.get("id")
+    if mid not in CATALOG:
+        raise HTTPException(400, "unknown model")
+    m = CATALOG[mid]
+    if len(NODES) < m.get("min_nodes", 1):
+        raise HTTPException(400, f"this model needs at least {m['min_nodes']} Sparks")
+    st = {"id": mid}
+    if not b.get("reset"):
+        try:
+            if b.get("gpu_mem_util"):
+                g = float(b["gpu_mem_util"])
+                assert 0.3 <= g <= 0.95
+                st["gpu_mem_util"] = f"{g:.2f}"
+            if b.get("max_model_len"):
+                n = int(b["max_model_len"])
+                assert 1024 <= n <= 1048576
+                st["max_model_len"] = str(n)
+        except (ValueError, AssertionError):
+            raise HTTPException(400, "GPU memory share 0.30-0.95 and context 1024-1048576 tokens")
+        ov = {}
+        if "vllm_args" in b:
+            a = check_args(str(b["vllm_args"] or "").replace("\n", " ").strip()[:4000])
+            if a != (m.get("vllm_args") or ""):
+                ov["vllm_args"] = a
+        if "env" in b:
+            e = parse_env(b["env"])
+            if e != (m.get("env") or {}):
+                ov["env"] = e
+        if b.get("image"):
+            img = str(b["image"]).strip()
+            if not re.match(r"^[A-Za-z0-9_./:@-]+$", img):
+                raise HTTPException(400, "the image looks like repo:tag or repo@sha256:...")
+            if img != m.get("image"):
+                ov["image"] = img
+        if b.get("executor") in ("mp", "ray") and b["executor"] != m.get("executor", "ray"):
+            ov["executor"] = b["executor"]
+        st["overrides"] = ov or None
+    save_settings({"custom": None, "gpu_mem_util": None, "max_model_len": None, "overrides": None, **st})
+    c = cfg()
+    event(f"deployment set to {c['entry'].get('name') or c['model']}"
+          + (f" with own changes ({', '.join(c['changed'])})" if c["changed"] else ""))
+    if b.get("deploy"):
+        start_action("deploy")
+    return {"ok": True, "current": c}
+
+
 def own_template(b, old_id=None):
     """Check an own template from the form and return the catalog entry."""
     def text(k, n):
@@ -1502,28 +1624,8 @@ def own_template(b, old_id=None):
         assert not mlen or 1024 <= int(mlen) <= 1048576
     except (ValueError, AssertionError):
         raise HTTPException(400, "Sparks 1-8, GPU share 0.30-0.95, context 1024-1048576 tokens")
-    args = text("vllm_args", 4000)
-    try:
-        toks = shlex.split(args)
-    except ValueError as e:
-        raise HTTPException(400, f"the vLLM arguments don't parse: {e}")
-    taken = sorted({t.split("=")[0] for t in toks if t.split("=")[0] in PANEL_FLAGS})
-    if taken:
-        raise HTTPException(400, f"the panel sets these itself, from the fields above: {', '.join(taken)}")
-    if any(" " in t for t in toks):
-        raise HTTPException(400, "an argument contains a space; write JSON values without spaces")
-    envs = {}
-    for line in str(b.get("env") or "").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        k, sep, v = line.partition("=")
-        k = k.strip()
-        if not sep or not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
-            raise HTTPException(400, f"environment lines look like NAME=value: {line[:60]}")
-        if k in PANEL_ENV:
-            raise HTTPException(400, f"{k} is set by the panel")
-        envs[k] = v.strip()
+    args = check_args(text("vllm_args", 4000))
+    envs = parse_env(b.get("env"))
     slug = re.sub(r"[^a-z0-9.-]+", "-", served.lower()).strip("-")[:50] or "model"
     mid = old_id or f"my-{slug}"
     if not old_id and mid in CATALOG:
@@ -1773,7 +1875,7 @@ async def api_model(request: Request):
             st["max_model_len"] = str(n)
     except (ValueError, AssertionError):
         raise HTTPException(400, "GPU memory must be 0.30–0.95 and context 1024–1048576 tokens")
-    save_settings({"custom": None, "gpu_mem_util": None, "max_model_len": None, **st})
+    save_settings({"custom": None, "gpu_mem_util": None, "max_model_len": None, "overrides": None, **st})
     c = cfg()
     event(f"model set to {c['model']}" + (f" (env overrides: {', '.join(c['locked'])})" if c["locked"] else "")
           + " — download it, then Restart to apply")
