@@ -10,11 +10,8 @@
   "gpu_mem_util": "0.70",
   "max_model_len": "262144",
   "vllm_args": "--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --language-model-only --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Verified on one DGX Spark 2026-10-09: starts in 5 min (weights 20.4 GiB, loaded in 2.5 min), 1.76M tokens of KV cache at 256k context (6.73x) with 0.70, ~11 tok/s for one stream with thinking off, tool calls work, correct English answers. In a short Swedish test it named the wrong lake (Vättern for Vänern), so check facts in Swedish. Dense 27B, Unsloth's recommended all-round model for DGX Spark, and the recommended start for one Spark; with two Sparks it is split across both. Compressed-tensors NVFP4 on the official vLLM image (0.29.1), no Ray. Thinking is on by default; turn it off per request with chat_template_kwargs {\"enable_thinking\": false}.",
+  "notes": "Verified on one DGX Spark 2026-10-09: starts in 5 min (weights 20.4 GiB, loaded in 2.5 min), 1.76M tokens of KV cache at 256k context (6.73x) with 0.70, ~11 tok/s for one stream with thinking off, tool calls work, correct English answers. In a short Swedish test it named the wrong lake (Vättern for Vänern), so check facts in Swedish. Dense 27B, Unsloth's recommended all-round model for DGX Spark, and the dense alternative to Qwen3.6-35B-A3B on one Spark: newer generation and all 27B parameters active, but about a quarter of its speed; with two Sparks it is split across both. Compressed-tensors NVFP4 on the official vLLM image (0.29.1), no Ray. Thinking is on by default; turn it off per request with chat_template_kwargs {\"enable_thinking\": false}.",
   "image": "vllm/vllm-openai@sha256:3a535c2156286dd4d535a6b84220126fb72f88e5c84979ec631fa753f007a179",
   "patchset": "none",
-  "executor": "mp",
-  "recommended_for": [
-    1
-  ]
+  "executor": "mp"
 }

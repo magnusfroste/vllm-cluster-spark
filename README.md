@@ -36,8 +36,8 @@ if you already run [Easypanel](https://easypanel.io), the panel deploys there to
 
 | Verified models | Sparks | Notes |
 |---|---|---|
-| Qwen3.6-35B-A3B (Qwen FP8) | 1 | ~49 tok/s on one Spark, 256k context. MoE, the fastest here |
-| Qwen3.8-27B (Unsloth NVFP4) | 1 | ~11 tok/s on one Spark, 256k context. The recommended start for one Spark |
+| Qwen3.6-35B-A3B (Qwen FP8) | 1 | ~49 tok/s on one Spark, 256k context. MoE, the fastest here. The recommended start for one Spark |
+| Qwen3.8-27B (Unsloth NVFP4) | 1 | ~11 tok/s on one Spark, 256k context. Dense and a newer generation, at a quarter of the speed |
 | Qwen3.8-27B Heretic (NVFP4 W4A16) | 2 (fits on 1) | ~22 tok/s, 256k context. Verified across two Sparks |
 | MiMo-V2.6-Flash-RL (FP8) | 2 | ~25 tok/s, 512k context |
 | GLM-5.3-Flash (NVFP4) | 2 | 128k context |
