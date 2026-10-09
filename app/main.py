@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.19.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.20.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -108,18 +108,28 @@ PATCHSETS = load_patchsets()
 
 
 def load_catalog():
-    """Ready-made models in models/*.json, in their display order."""
-    d = os.path.join(os.path.dirname(__file__), "models")
+    """Ready-made models in models/*.json, then the admin's own templates in /data/models/*.json
+    (they survive updates of the panel), in their display order."""
     cat = []
-    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-        try:
-            cat.append(json.load(open(os.path.join(d, name))))
-        except (OSError, ValueError):
-            pass
+    for d, own in ((os.path.join(os.path.dirname(__file__), "models"), False), (OWN_DIR, True)):
+        for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            try:
+                m = json.load(open(os.path.join(d, name)))
+            except (OSError, ValueError):
+                continue
+            if own and not str(m.get("id", "")).startswith("my-"):
+                continue  # an own template can't replace a ready-made one
+            cat.append({**m, "own": own})
     return {m["id"]: m for m in sorted(cat, key=lambda m: m.get("order", 99))}
 
 
+OWN_DIR = os.path.join(env("DATA_DIR", "/data"), "models")
 CATALOG = load_catalog()
+
+
+def reload_catalog():
+    CATALOG.clear()
+    CATALOG.update(load_catalog())
 # Model settings the app owns. If one is set in the env it wins, and the page shows it as locked.
 MODEL_KEYS = {"model": "MODEL", "served_model_name": "SERVED_MODEL_NAME", "image": "VLLM_IMAGE",
               "gpu_mem_util": "GPU_MEM_UTIL", "max_model_len": "MAX_MODEL_LEN",
@@ -1455,6 +1465,113 @@ def api_garage(fresh: int = 0):
     return {**_garage["res"], "checked": _garage["ts"], "port": VLLM_PORT,
             "serving": (STATUS.get("cluster") or {}).get("models") or [],
             "chosen": c["served_model_name"], "agent_version": AGENT_VERSION}
+
+
+# Flags the panel sets itself, from its own fields; an own template must not set them in its arguments.
+PANEL_FLAGS = {"--host", "--port", "--api-key", "--served-model-name", "--gpu-memory-utilization",
+               "--max-model-len", "--tensor-parallel-size", "-tp", "--distributed-executor-backend",
+               "--nnodes", "--node-rank", "--master-addr", "--master-port", "--headless", "--model"}
+PANEL_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "VLLM_API_KEY", "HF_HUB_OFFLINE"}
+
+
+def own_template(b, old_id=None):
+    """Check an own template from the form and return the catalog entry."""
+    def text(k, n):
+        return str(b.get(k) or "").strip()[:n]
+    name, model = text("name", 80), text("model", 200)
+    if not name:
+        raise HTTPException(400, "give the model a name")
+    if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", model):
+        raise HTTPException(400, "the Hugging Face repo looks like org/model")
+    served = text("served_model_name", 64) or model.split("/")[-1].lower()
+    if not re.match(r"^[A-Za-z0-9_.-]+$", served):
+        raise HTTPException(400, "the name for clients may only use letters, digits, '.', '_' and '-'")
+    image = text("image", 300) or next((m["image"] for m in CATALOG.values()
+                                         if m.get("status") == "verified" and m.get("executor") == "mp"), "")
+    if not re.match(r"^[A-Za-z0-9_./:@-]+$", image):
+        raise HTTPException(400, "the image looks like repo:tag or repo@sha256:...")
+    executor = text("executor", 4) or "mp"
+    if executor not in ("mp", "ray"):
+        raise HTTPException(400, "executor is mp or ray")
+    try:
+        min_nodes = int(b.get("min_nodes") or 1)
+        assert 1 <= min_nodes <= 8
+        gpu = f"{float(b.get('gpu_mem_util') or 0.8):.2f}"
+        assert 0.3 <= float(gpu) <= 0.95
+        mlen = str(int(b.get("max_model_len") or 0) or "")
+        assert not mlen or 1024 <= int(mlen) <= 1048576
+    except (ValueError, AssertionError):
+        raise HTTPException(400, "Sparks 1-8, GPU share 0.30-0.95, context 1024-1048576 tokens")
+    args = text("vllm_args", 4000)
+    try:
+        toks = shlex.split(args)
+    except ValueError as e:
+        raise HTTPException(400, f"the vLLM arguments don't parse: {e}")
+    taken = sorted({t.split("=")[0] for t in toks if t.split("=")[0] in PANEL_FLAGS})
+    if taken:
+        raise HTTPException(400, f"the panel sets these itself, from the fields above: {', '.join(taken)}")
+    if any(" " in t for t in toks):
+        raise HTTPException(400, "an argument contains a space; write JSON values without spaces")
+    envs = {}
+    for line in str(b.get("env") or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        k, sep, v = line.partition("=")
+        k = k.strip()
+        if not sep or not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
+            raise HTTPException(400, f"environment lines look like NAME=value: {line[:60]}")
+        if k in PANEL_ENV:
+            raise HTTPException(400, f"{k} is set by the panel")
+        envs[k] = v.strip()
+    slug = re.sub(r"[^a-z0-9.-]+", "-", served.lower()).strip("-")[:50] or "model"
+    mid = old_id or f"my-{slug}"
+    if not old_id and mid in CATALOG:
+        raise HTTPException(409, f"there is already a model called {mid}; pick another name for clients")
+    size = None
+    code, body = http_get(f"https://huggingface.co/api/models/{model}?blobs=true",
+                          {"Authorization": f"Bearer {hf_token()}"} if hf_token() else {}, timeout=15)
+    if code == 200:
+        try:
+            size = round(sum(f.get("size") or 0 for f in json.loads(body)["siblings"]) / 1e9, 1)
+        except (ValueError, KeyError):
+            pass
+    elif code in (401, 404):
+        raise HTTPException(400, f"Hugging Face doesn't know {model} (or it is gated and the token has no access)")
+    return {"order": 80, "id": mid, "name": name, "summary": text("summary", 200), "arch": text("arch", 80),
+            "quant": text("quant", 40), "model": model, "served_model_name": served, "size_gb": size,
+            "min_nodes": min_nodes, "status": "own", "gpu_mem_util": gpu, "max_model_len": mlen,
+            "vllm_args": args, "notes": text("notes", 2000), "image": image, "patchset": "none",
+            "executor": executor, "env": envs}
+
+
+@app.post("/api/own-models", dependencies=[Depends(auth)])
+async def api_own_save(request: Request):
+    """Add or change an own model template. It lives in /data/models and survives updates."""
+    b = await request.json()
+    old = str(b.get("id") or "")
+    if old and (old not in CATALOG or not CATALOG[old].get("own")):
+        raise HTTPException(404, "unknown own model")
+    m = own_template(b, old or None)
+    os.makedirs(OWN_DIR, exist_ok=True)
+    tmp = os.path.join(OWN_DIR, f".{m['id']}.tmp")
+    json.dump(m, open(tmp, "w"), indent=2, ensure_ascii=False)
+    os.replace(tmp, os.path.join(OWN_DIR, f"{m['id']}.json"))
+    reload_catalog()
+    event(f"own model {'changed' if old else 'added'}: {m['name']} ({m['model']})")
+    return {"ok": True, "model": m}
+
+
+@app.delete("/api/own-models/{mid}", dependencies=[Depends(auth)])
+def api_own_delete(mid: str):
+    if mid not in CATALOG or not CATALOG[mid].get("own"):
+        raise HTTPException(404, "unknown own model")
+    if load_settings().get("id") == mid:
+        raise HTTPException(409, "that is the chosen model; pick another one first")
+    os.remove(os.path.join(OWN_DIR, f"{mid}.json"))
+    reload_catalog()
+    event(f"own model removed: {mid}")
+    return {"ok": True}
 
 
 @app.post("/api/alert-test", dependencies=[Depends(auth)])

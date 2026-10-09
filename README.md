@@ -64,7 +64,7 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
 | | **Logs** | The vLLM container log of each node, live, with a filter |
 | | **Events** | What the panel and the cluster did: starts, config writes, downloads, automatic restarts |
-| **Models** | **Models** | A catalog of ready-made models, or any model on Hugging Face; download on every node at once; the models on disk, with Delete |
+| **Models** | **Models** | The model library with one card per model, your own templates (also from a docker compose file); download on every node at once; the models on disk, with Delete |
 | | **API** | The API addresses, model name and key, examples for curl, Python and OpenCode, and a test prompt |
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
 | | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
@@ -276,6 +276,23 @@ OpenAI-compatible, so most tools work with those three values.
 per kWh. The panel reads vLLM's token counters and each node's GPU power every poll and keeps
 them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
 disks; set **Other power per node** under **Settings**, from a wall meter, to count the whole box.
+
+## Model cards and your own models
+
+Every model in the library has the same card: a line about it, its type (dense or MoE, and
+how many parameters are active), quantization, download size, how many Sparks it needs, its
+context and the speed we measured. **Read more** shows the notes and the exact settings (image,
+arguments, environment), and the link goes to the model on Hugging Face. Badges mark the
+verified models and the recommended start for your number of Sparks.
+
+**+ Add your own model** makes a template like the ready-made ones: a Hugging Face repo, the
+vLLM image, how the nodes join (`mp` or `ray`), the Sparks it needs, GPU share, context, extra
+vLLM arguments and environment variables (`NAME=value`, one per line). Already running a model
+with docker compose? Paste the service under **Fill from a docker compose file**: the image, the
+model, the arguments and the environment fill in by themselves, and what the panel sets itself
+(ports, the API key, the Hugging Face token, tensor parallelism) is left out. Own templates are
+kept in `models/` in the panel's data directory, so they survive updates. Edit or remove them on
+their card. JSON values in the arguments must be written without spaces; the import does that.
 
 ## Adding a Spark later
 

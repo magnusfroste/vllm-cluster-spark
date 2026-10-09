@@ -2,6 +2,8 @@
   "order": 9,
   "id": "glm-4.7-flash",
   "name": "GLM-4.7-Flash (Unsloth NVFP4)",
+  "summary": "Small, fast GLM.",
+  "quant": "NVFP4",
   "model": "unsloth/GLM-4.7-Flash-NVFP4",
   "served_model_name": "glm-4.7-flash",
   "size_gb": 21.3,

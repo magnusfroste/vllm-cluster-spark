@@ -261,6 +261,28 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
 .credgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 32px; }
 .credgrid > div > b { font-size: 15px; }
 .credgrid input[type=password] { flex: 1; min-width: 180px; }
+.mcard .mtop { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.mcard .mtop b { display: inline; font-size: 15px; letter-spacing: -.01em; }
+.mbadges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.mbadges .badge { margin-left: 0; }
+.msum { font-size: 13px; margin: 6px 0 2px; }
+.mfacts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; margin: 10px 0 8px; font-size: 13px; }
+.mfacts span { display: block; font-size: 11px; color: var(--muted); }
+.mfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }
+.mfoot a { margin-right: auto; }
+.mmore { margin-top: 8px; font-size: 12.5px; }
+.mmore p { margin: 0 0 8px; }
+.mmore dl { display: grid; grid-template-columns: 130px 1fr; gap: 4px 10px; margin: 0; }
+.mmore dt { color: var(--muted); } .mmore dd { margin: 0; word-break: break-all; }
+.mgroup { grid-column: 1 / -1; margin-top: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.madd { text-align: left; border-style: dashed; display: flex; flex-direction: column; gap: 6px; justify-content: center; box-shadow: none; }
+.models { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+.dlg-wide { width: min(760px, calc(100vw - 32px)); }
+.dlg textarea { width: 100%; margin-top: 4px; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px;
+                border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); resize: vertical; }
+.ofgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 14px; margin-top: 8px; }
+.dlg select { margin-top: 4px; }
+@media (max-width: 640px) { .ofgrid, .mfacts { grid-template-columns: 1fr 1fr; } }
 .field input { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
                background: var(--bg); color: var(--fg); }
 </style>
@@ -410,11 +432,6 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     <h2>Model</h2>
     <div id="modelHead" class="muted">Loading…</div>
     <div class="models" id="models"></div>
-    <div id="customBox" style="display:none;margin-top:10px" class="row">
-      <label class="field" style="flex:2">Hugging Face repo<input type="text" id="cuModel" placeholder="org/model-NVFP4"></label>
-      <label class="field">Name for clients<input type="text" id="cuServed" placeholder="my-model"></label>
-      <label class="field" style="flex:3">Extra vLLM arguments<input type="text" id="cuArgs" placeholder="--reasoning-parser qwen3"></label>
-    </div>
     <details style="margin-top:10px"><summary>Advanced</summary>
       <div class="row" style="margin-top:8px">
         <label class="field">GPU memory share (0.30–0.95)<input type="text" id="mGpu" size="6"></label>
@@ -529,6 +546,37 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   </div>
 </div>
 <div id="tip"></div>
+<dialog id="ownDialog" class="dlg dlg-wide">
+  <form method="dialog" id="ownForm">
+    <h3 id="ownTitle">Add your own model</h3>
+    <p class="muted" style="margin:0 0 10px">A template like the ready-made ones. It is kept in the panel's data directory and
+      survives updates. Already running a model with docker compose? Paste the service below and the form fills itself.</p>
+    <details id="ownImportDet"><summary>Fill from a docker compose file</summary>
+      <textarea id="ownCompose" rows="8" spellcheck="false" placeholder="services:&#10;  vllm:&#10;    image: vllm/vllm-openai:latest&#10;    environment:&#10;      - VLLM_USE_V2_MODEL_RUNNER=0&#10;    command: >&#10;      vllm serve org/model --max-model-len 131072 --reasoning-parser qwen3"></textarea>
+      <div class="row" style="margin-top:6px"><button class="small" id="ownParse" type="button">Fill the form</button>
+        <small class="muted" id="ownParseInfo">Ports, volumes, the API key and the Hugging Face token are left out: the panel sets them.</small></div>
+    </details>
+    <div class="ofgrid">
+      <label class="field">Name<input type="text" id="oName" placeholder="My Qwen" required></label>
+      <label class="field">Hugging Face repo<input type="text" id="oModel" placeholder="org/model" required></label>
+      <label class="field">Name for clients<input type="text" id="oServed" placeholder="from the repo"></label>
+      <label class="field">vLLM image<input type="text" id="oImage" placeholder="the verified official image"></label>
+      <label class="field">Nodes join with<select id="oExec"><option value="mp">mp (vLLM's own, no Ray)</option><option value="ray">ray</option></select></label>
+      <label class="field">Sparks it needs<input type="number" id="oNodes" min="1" max="8" value="1"></label>
+      <label class="field">GPU memory share<input type="text" id="oGpu" placeholder="0.80"></label>
+      <label class="field">Max context (tokens)<input type="text" id="oLen" placeholder="262144"></label>
+      <label class="field">Type<input type="text" id="oArch" placeholder="MoE, 35B total, 3B active"></label>
+      <label class="field">Quantization<input type="text" id="oQuant" placeholder="FP8, NVFP4…"></label>
+    </div>
+    <label class="field">One line about it<input type="text" id="oSummary" placeholder="What it is good for"></label>
+    <label class="field">Extra vLLM arguments<textarea id="oArgs" rows="3" spellcheck="false" placeholder="--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder"></textarea></label>
+    <label class="field">Environment variables, one NAME=value per line<textarea id="oEnv" rows="3" spellcheck="false" placeholder="VLLM_USE_DEEP_GEMM=0"></textarea></label>
+    <label class="field">Notes<textarea id="oNotes" rows="2"></textarea></label>
+    <div id="ownInfo" class="muted" style="min-height:20px;margin-top:8px"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button value="cancel" formnovalidate>Cancel</button><button class="primary" value="save">Save</button></div>
+  </form>
+</dialog>
 <dialog id="pwDialog" class="dlg">
   <form method="dialog" id="pwForm">
     <h3>Change password</h3>
@@ -1263,6 +1311,128 @@ async function loadImages() {
 }
 $("#imgLoad").onclick = loadImages;
 
+
+// ---------- own model templates ----------
+let ownEditing = null;
+function openOwn(id) {
+  ownEditing = id || null;
+  const m = id ? M.catalog.find(x => x.id === id) || {} : {};
+  $("#ownTitle").textContent = id ? `Edit ${m.name}` : "Add your own model";
+  const v = {oName: m.name, oModel: m.model, oServed: m.served_model_name, oImage: m.image, oNodes: m.min_nodes || 1,
+    oGpu: m.gpu_mem_util, oLen: m.max_model_len, oArch: m.arch, oQuant: m.quant, oSummary: m.summary,
+    oArgs: m.vllm_args, oNotes: m.notes, oEnv: Object.entries(m.env || {}).map(([k, x]) => `${k}=${x}`).join("\n")};
+  for (const [k, x] of Object.entries(v)) $("#" + k).value = x ?? "";
+  $("#oExec").value = m.executor || "mp";
+  $("#ownCompose").value = ""; $("#ownInfo").textContent = ""; $("#ownParseInfo").textContent = "Ports, volumes, the API key and the Hugging Face token are left out: the panel sets them.";
+  $("#ownImportDet").open = !id;
+  $("#ownDialog").showModal();
+}
+// A shell-like split: quotes group, backslash-newlines vanish.
+function splitArgs(s) {
+  const out = []; let cur = "", q = null, has = false;
+  for (const ch of s.replace(/\\\n/g, " ")) {
+    if (q) { if (ch === q) q = null; else cur += ch; }
+    else if (ch === "'" || ch === '"') { q = ch; has = true; }
+    else if (/\s/.test(ch)) { if (cur || has) out.push(cur); cur = ""; has = false; }
+    else cur += ch;
+  }
+  if (cur || has) out.push(cur);
+  return out;
+}
+// Reads the parts of a docker compose service the panel needs: image, environment and the vLLM command.
+function parseCompose(txt) {
+  const lines = txt.replace(/\t/g, "  ").split("\n"), r = {env: [], args: [], skipped: []};
+  const ind = l => l.match(/^ */)[0].length;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i], t = l.trim();
+    let m;
+    if ((m = t.match(/^image:\s*["']?([^"'\s]+)/))) r.image = m[1];
+    else if (/^environment:\s*$/.test(t)) {
+      const base = ind(l);
+      while (i + 1 < lines.length && (!lines[i + 1].trim() || ind(lines[i + 1]) > base)) {
+        const e = lines[++i].trim().replace(/^-\s*/, "").replace(/^["']|["']$/g, "");
+        if (!e) continue;
+        const kv = e.includes("=") ? e.split(/=(.*)/s) : e.split(/:\s*(.*)/s);
+        if (kv[0]) r.env.push([kv[0].trim(), (kv[1] || "").trim().replace(/^["']|["']$/g, "")]);
+      }
+    } else if ((m = t.match(/^(command|entrypoint):\s*(.*)$/))) {
+      let cmd = m[2];
+      if (/^[>|][-+]?$/.test(cmd) || cmd === "") {
+        const base = ind(l); cmd = "";
+        while (i + 1 < lines.length && (!lines[i + 1].trim() || ind(lines[i + 1]) > base)) cmd += " " + lines[++i].trim();
+      } else if (cmd.startsWith("[")) {
+        try { cmd = JSON.parse(cmd).map(x => /[\s{}\[\]]/.test(x) ? `'${x}'` : x).join(" "); } catch (e) {}
+      }
+      if (m[1] === "command" || /vllm/.test(cmd)) r.command = cmd;
+    }
+  }
+  const toks = splitArgs(r.command || "");
+  const own = {"--host": 1, "--port": 1, "--api-key": 1, "--tensor-parallel-size": 1, "-tp": 1, "--nnodes": 1,
+               "--node-rank": 1, "--master-addr": 1, "--master-port": 1};
+  for (let i = 0; i < toks.length; i++) {
+    let t = toks[i], val = null;
+    if (t.startsWith("--") && t.includes("=")) [t, val] = [t.slice(0, t.indexOf("=")), t.slice(t.indexOf("=") + 1)];
+    const next = () => val ?? toks[++i];
+    if (["python", "python3", "-m", "vllm.entrypoints.openai.api_server", "vllm", "serve"].includes(t)) continue;
+    if (t === "--model") r.model = next();
+    else if (!t.startsWith("-") && !r.model && /\//.test(t)) r.model = t;
+    else if (t === "--served-model-name") r.served = next();
+    else if (t === "--gpu-memory-utilization") r.gpu = next();
+    else if (t === "--max-model-len") r.len = next();
+    else if (t === "--distributed-executor-backend") r.exec = next();
+    else if (own[t]) { next(); r.skipped.push(t); }
+    else if (t === "--headless") r.skipped.push(t);
+    else if (t.startsWith("-")) {
+      r.args.push(t);
+      const n = val ?? (toks[i + 1] && !toks[i + 1].startsWith("--") ? toks[++i] : null);
+      if (n != null) {
+        let x = n;
+        if (/^[{\[]/.test(x)) { try { x = JSON.stringify(JSON.parse(x)); } catch (e) {} }  // no spaces inside JSON
+        r.args.push(/[\s{}\[\]"*?]/.test(x) ? `'${x}'` : x);
+      }
+    }
+  }
+  return r;
+}
+$("#ownParse").onclick = () => {
+  const r = parseCompose($("#ownCompose").value);
+  if (!r.model && !r.image) { $("#ownParseInfo").innerHTML = `<span style="color:var(--err)">No image or vLLM command found.</span>`; return; }
+  if (r.model) { $("#oModel").value = r.model; if (!$("#oName").value) $("#oName").value = r.model.split("/").pop(); }
+  if (r.image) $("#oImage").value = r.image;
+  if (r.served) $("#oServed").value = r.served;
+  if (r.gpu) $("#oGpu").value = r.gpu;
+  if (r.len) $("#oLen").value = r.len;
+  if (r.exec === "ray" || r.exec === "mp") $("#oExec").value = r.exec;
+  $("#oArgs").value = r.args.join(" ");
+  const env = r.env.filter(([k]) => !["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "VLLM_API_KEY", "HF_HUB_OFFLINE"].includes(k));
+  $("#oEnv").value = env.map(([k, v]) => `${k}=${v}`).join("\n");
+  const left = [...r.skipped, ...r.env.filter(([k]) => !env.find(e => e[0] === k)).map(([k]) => k)];
+  $("#ownParseInfo").innerHTML = `<span style="color:var(--ok)">Filled in.</span> ${left.length ? "Left out, the panel sets them: " + esc(left.join(", ")) + "." : ""}
+    Check the form, then Save.`;
+};
+$("#ownForm").addEventListener("submit", async e => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  const body = {id: ownEditing, name: $("#oName").value, model: $("#oModel").value, served_model_name: $("#oServed").value,
+    image: $("#oImage").value, executor: $("#oExec").value, min_nodes: $("#oNodes").value, gpu_mem_util: $("#oGpu").value,
+    max_model_len: $("#oLen").value, arch: $("#oArch").value, quant: $("#oQuant").value, summary: $("#oSummary").value,
+    vllm_args: $("#oArgs").value.replace(/\s*\n\s*/g, " "), env: $("#oEnv").value, notes: $("#oNotes").value};
+  $("#ownInfo").textContent = "Checking with Hugging Face…";
+  const r = await fetch("api/own-models", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const d = await r.json();
+  if (!r.ok) { $("#ownInfo").innerHTML = `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`; return; }
+  $("#ownDialog").close();
+  pick = d.model.id; await loadModels();
+});
+async function deleteOwn(id) {
+  const m = M.catalog.find(x => x.id === id);
+  if (!confirm(`Remove your template ${m?.name || id}? Downloaded files stay on disk (remove them under Models on disk).`)) return;
+  const r = await fetch(`api/own-models/${encodeURIComponent(id)}`, {method: "DELETE"});
+  if (!r.ok) return alert((await r.json()).detail || r.status);
+  if (pick === id) pick = M.settings.id || null;
+  await loadModels();
+}
+
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;
   $("#hfState").innerHTML = !hf.set ? `<span style="color:var(--warn)">Not set.</span>`
@@ -1467,36 +1637,55 @@ function drawModels(headOnly) {
         ${locked > 1 ? "are" : "is"} set in the app's env and override${locked > 1 ? "" : "s"} the choice here. Remove ${locked > 1 ? "them" : "it"} there to choose here.</div>` : "");
   if (headOnly) return;
   const tooBig = id => (M.catalog.find(m => m.id === id)?.min_nodes || 1) > (M.nodes || 1);
-  const card = (id, title, meta, notes, badge) => `<label class="mcard ${pick === id ? "sel" : ""} ${tooBig(id) ? "off" : ""}">
-      <input type="radio" name="m" value="${esc(id)}" ${pick === id ? "checked" : ""} ${tooBig(id) ? "disabled" : ""}>
-      <b>${esc(title)} ${badge}</b><div class="meta">${meta}</div>${notes ? `<div class="notes">${esc(notes)}</div>` : ""}</label>`;
   const nodes = M.nodes || 1;
-  const group = (title, list) => list.length ? `<div class="muted" style="grid-column:1/-1;margin-top:4px">${title}</div>` + list.map(m => card(m.id, m.name,
-      `${m.size_gb} GB · ${m.min_nodes > nodes ? `<b>needs ${m.min_nodes} Sparks — this setup has ${nodes}</b>`
-        : m.min_nodes > 1 ? `needs ${m.min_nodes} Sparks` : "fits on one Spark"} · <code>${esc(m.model)}</code>`,
-      m.notes, `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`
-        + (cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : "")))
-    .join("") : "";
-  const one = M.catalog.filter(m => m.min_nodes <= 1), more = M.catalog.filter(m => m.min_nodes > 1);
-  $("#models").innerHTML = nodes > 1
+  const fmtLen = n => !n ? "–" : +n >= 1048576 ? (+n / 1048576) + "M" : Math.round(+n / 1024) + "k";
+  const badge = m => m.own ? `<span class="badge run">Own</span>` : `<span class="badge ${m.status}">${m.status === "verified" ? "Verified" : "Untested"}</span>`;
+  // one card per model, the same fields for every one; the long notes and the settings behind "Read more"
+  const card = m => `<label class="mcard ${pick === m.id ? "sel" : ""} ${tooBig(m.id) ? "off" : ""}">
+      <input type="radio" name="m" value="${esc(m.id)}" ${pick === m.id ? "checked" : ""} ${tooBig(m.id) ? "disabled" : ""}>
+      <div class="mtop"><b>${esc(m.name)}</b><span class="mbadges">${badge(m)}
+        ${(m.recommended_for || []).includes(nodes) ? `<span class="badge verified">Recommended</span>` : ""}
+        ${cur.id === m.id && running.includes(m.served_model_name) ? `<span class="badge run">Running</span>` : ""}</span></div>
+      ${m.summary ? `<div class="msum">${esc(m.summary)}</div>` : ""}
+      <div class="mfacts">
+        <div><span>Type</span>${esc(m.arch || "–")}</div><div><span>Quantization</span>${esc(m.quant || "–")}</div>
+        <div><span>Download</span>${m.size_gb ? m.size_gb + " GB" : "–"}</div>
+        <div><span>Sparks</span>${m.min_nodes > nodes ? `<b style="color:var(--warn)">${m.min_nodes} (you have ${nodes})</b>` : m.min_nodes > 1 ? m.min_nodes : "1 or more"}</div>
+        <div><span>Context</span>${fmtLen(m.max_model_len)}</div><div><span>Speed</span>${esc(m.speed || "not measured")}</div>
+      </div>
+      <div class="mfoot"><a href="https://huggingface.co/${esc(m.model)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Hugging Face ↗</a>
+        <button type="button" class="small" onclick="event.preventDefault();this.closest('.mcard').querySelector('.mmore').toggleAttribute('hidden')">Read more</button>
+        ${m.own ? `<button type="button" class="small" onclick="event.preventDefault();openOwn('${esc(m.id)}')">Edit</button>
+          <button type="button" class="small danger" onclick="event.preventDefault();deleteOwn('${esc(m.id)}')">Remove</button>` : ""}</div>
+      <div class="mmore" hidden>${m.notes ? `<p>${esc(m.notes)}</p>` : ""}
+        <dl><dt>Repo</dt><dd><code>${esc(m.model)}</code></dd><dt>Name for clients</dt><dd><code>${esc(m.served_model_name || "")}</code></dd>
+        <dt>Image</dt><dd><code>${esc(m.image || "")}</code></dd><dt>Nodes join with</dt><dd>${esc(m.executor || "ray")}</dd>
+        <dt>GPU memory share</dt><dd>${esc(m.gpu_mem_util || "–")}</dd>
+        <dt>vLLM arguments</dt><dd><code>${esc(m.vllm_args || "–")}</code></dd>
+        ${Object.keys(m.env || {}).length ? `<dt>Environment</dt><dd><code>${esc(Object.entries(m.env).map(([k, v]) => k + "=" + v).join(" "))}</code></dd>` : ""}</dl></div>
+    </label>`;
+  const group = (title, list) => list.length ? `<div class="mgroup">${title}</div>` + list.map(card).join("") : "";
+  const ready = M.catalog.filter(m => !m.own), mine = M.catalog.filter(m => m.own);
+  const one = ready.filter(m => m.min_nodes <= 1), more = ready.filter(m => m.min_nodes > 1);
+  $("#models").innerHTML = (nodes > 1
     ? group(`Needs ${nodes} Sparks — what a cluster is for`, more.filter(m => m.min_nodes <= nodes))
       + group(`Fits on one Spark — runs here across all ${nodes} nodes`, one)
       + group("Needs more Sparks than this setup has", more.filter(m => m.min_nodes > nodes))
     : group("Fits on one Spark", one)
-      + group("Needs two Sparks — connect a second one to run these", more)
-    + `<div class="muted" style="grid-column:1/-1;margin-top:4px">Anything else</div>` + card("custom", "Other model from Hugging Face", "Any repo vLLM supports, NVFP4 recommended", "You set the arguments. Nothing is checked in advance.", "");
-  const e = pick === "custom" ? (M.settings.custom || {}) : M.catalog.find(m => m.id === pick) || {};
+      + group("Needs two Sparks — connect a second one to run these", more))
+    + `<div class="mgroup">Your own models</div>` + mine.map(card).join("")
+    + `<button type="button" class="mcard madd" onclick="openOwn()"><b>+ Add your own model</b>
+        <span class="muted">Any Hugging Face repo vLLM supports, with your own image, arguments and environment —
+        or paste a docker compose file you already run.</span></button>`;
+  const e = M.catalog.find(m => m.id === pick) || {};
   const same = pick === M.settings.id;
   $("#mGpu").value = (same && M.settings.gpu_mem_util) || e.gpu_mem_util || "";
   $("#mLen").value = (same && M.settings.max_model_len) || e.max_model_len || "";
-  $("#customBox").style.display = pick === "custom" ? "" : "none";
-  if (pick === "custom") { $("#cuModel").value = e.model || ""; $("#cuServed").value = e.served_model_name || ""; $("#cuArgs").value = e.vllm_args || ""; }
   document.querySelectorAll("input[name=m]").forEach(r => r.addEventListener("change", () => { pick = r.value; drawModels(); }));
 }
 $("#mSave").addEventListener("click", async () => {
   if (!pick) return alert("Pick a model first.");
   const body = {id: pick, gpu_mem_util: $("#mGpu").value.trim(), max_model_len: $("#mLen").value.trim()};
-  if (pick === "custom") body.custom = {model: $("#cuModel").value.trim(), served_model_name: $("#cuServed").value.trim(), vllm_args: $("#cuArgs").value.trim()};
   const r = await fetch("api/model", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   const d = await r.json();
   if (!r.ok) return alert(d.detail || r.status);

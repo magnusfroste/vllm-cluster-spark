@@ -2,6 +2,8 @@
   "order": 1,
   "id": "glm-5.3-flash",
   "name": "GLM-5.3-Flash (NVFP4)",
+  "summary": "Zhipu's GLM-5.3 Flash, built for DGX Spark; needs its patch set and Ray.",
+  "quant": "NVFP4",
   "model": "local-inference-lab/GLM-5.3-Flash-NVFP4-Spark",
   "served_model_name": "glm-5.3-flash",
   "size_gb": 187.7,
@@ -11,6 +13,6 @@
   "max_model_len": "262144",
   "patchset": "glm-5.3-flash-nvfp4",
   "vllm_args": "--trust-remote-code --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm47 --enable-prefix-caching --enable-chunked-prefill --max-num-seqs 8",
-  "notes": "Verified on 2 \u00d7 DGX Spark 2026-09-28: 256k context, ~344k tokens KV cache at 0.83. Needs its patch set, which is tied to this image digest. Lower GPU memory makes the worker run out of KV cache at 256k.",
+  "notes": "Verified on 2 × DGX Spark 2026-09-28: 256k context, ~344k tokens KV cache at 0.83. Needs its patch set, which is tied to this image digest. Lower GPU memory makes the worker run out of KV cache at 256k.",
   "image": "ghcr.io/spark-arena/dgx-vllm-eugr-nightly-tf5@sha256:1b0be62c1ccb37f738746cd8fbcec73b46f0c283082a6d46aebf9f19b5747563"
 }
