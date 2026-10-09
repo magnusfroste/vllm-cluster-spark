@@ -35,7 +35,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
 .brand { padding: 4px 8px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .brandrow { display: flex; gap: 9px; align-items: center; }
 .brandrow b { font-size: 16px; letter-spacing: -.02em; font-weight: 700; }
-.brandmeta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+.brandmark { width: 22px; height: 22px; color: var(--accent); }
 .navgroup { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
             padding: 16px 10px 6px; font-weight: 600; opacity: .8; }
 .navitem { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--fg);
@@ -288,8 +288,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brandrow"><span class="dot" id="sdot"></span><b>vLLM Panel</b></div>
-      <div class="brandmeta" id="bMeta"></div>
+      <div class="brandrow"><svg class="brandmark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4" fill="currentColor" opacity=".15"/><path d="M7 9l3 6 3-6M15 9v6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><b>vLLM Panel</b></div>
     </div>
     <nav>
       <div class="navgroup">cluster</div>
@@ -349,7 +348,6 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
       </div>
     </div>
     <div id="next" class="next"></div>
-    <div class="kv" id="kv"></div>
     <div id="alerts"></div>
   </section>
   <div class="dash">
@@ -376,7 +374,7 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   <div class="page" data-page="nodes">
     <div class="pagehead"><h1>Nodes</h1><span class="muted">Setup checks and live status per node</span></div>
   <section class="card" id="sparksCard">
-    <h2>Sparks in this cluster</h2>
+    <h2>Sparks</h2>
     <div id="sparks" class="muted">Loading…</div>
     <details style="margin-top:12px" id="addDet"><summary>Add a Spark</summary>
       <ol class="steps">
@@ -655,7 +653,9 @@ function renderDash() {
       <svg viewBox="0 0 240 32" style="width:100%;height:40px;margin-top:10px" aria-label="Tokens per hour today">${bars}</svg>`;
   }
   // latest events
-  $("#dEvents").innerHTML = (S.events || []).slice(0, 4).map(e => `<div class="evrow ${e.kind}">
+  // what the cluster and the admin did; the panel's own restarts (deploys) and settings saves stay on the Events page
+  const noise = e => e.kind === "info" && /^(vLLM Panel started|vllmapp started|settings changed|created SSH key)/.test(e.msg);
+  $("#dEvents").innerHTML = (S.events || []).filter(e => !noise(e)).slice(0, 4).map(e => `<div class="evrow ${e.kind}">
       <span class="t">${hhmm(e.ts).slice(0, 5)}</span><span>${esc(e.msg.length > 90 ? e.msg.slice(0, 88) + "…" : e.msg)}</span></div>`).join("")
     || "No events yet.";
 }
@@ -730,23 +730,15 @@ function render() {
   const c = S.cluster || {}, cfg = S.config;
   const stateText = c.healthy ? "Responding" : c.hung ? "Hung" : c.state === "starting"
     ? `Starting${c.phase_pct != null ? " " + c.phase_pct + " %" : ""}` : (c.state || "…");
-  $("#bMeta").innerHTML = `<span>${esc(stateText)} · ${(cfg.nodes || []).length} nodes</span>
-    <span title="Last status update">${S.updated ? hhmm(new Date(S.updated * 1000)).slice(0, 5) : "–"}</span>`;
   const cls = c.healthy ? "ok" : (c.hung || c.errors?.length) ? "err"
     : ["starting", "not responding"].includes(c.state) ? "warn" : "err";
   $("#dot").className = "dot " + cls;
   $("#state").textContent = c.healthy ? "Responding" : (c.hung ? "Hung" : (c.state || "…"));
-  $("#phase").textContent = c.healthy ? `models: ${(c.models||[]).join(", ")}`
+  $("#phase").textContent = c.healthy
+      ? [c.uptime_s != null ? `Up ${dur(c.uptime_s)}` : "", c.vllm_version ? `vLLM ${c.vllm_version.replace(/\+.*/, "")}` : "",
+         `${(cfg.nodes || []).length} ${(cfg.nodes || []).length === 1 ? "Spark" : "Sparks"}`].filter(Boolean).join(" · ")
     : c.state === "starting" ? `phase: ${c.phase || "unknown"}${c.phase_pct != null ? " " + c.phase_pct + " %" : ""} · ${dur(c.uptime_s)} since start`
       + (c.log_silent_s > 60 ? ` · last log line ${dur(c.log_silent_s)} ago` : "") : "";
-  $("#kv").innerHTML = [
-    ["vLLM", c.vllm_version ? c.vllm_version.replace(/\+.*/, "") : "–", c.image_ref ? "Image: " + c.image_ref : ""],
-    ["KV-cache", c.kv_tokens ? c.kv_tokens.toLocaleString("en-US") + " tokens" : "–"],
-    ["Concurrency", c.concurrency ? `${c.concurrency.x}x at ${(c.concurrency.tokens/1024).toFixed(0)}k` : "–"],
-    ["Head container uptime", dur(c.uptime_s)],
-    ["Image", (c.image_ref ? c.image_ref.replace(/^.*\//, "").replace(/@sha256:(.{8}).*/, "@$1") + " · " : "")
-      + (c.image_mismatch ? "DIFFERS between nodes" : "same on all nodes"), c.image_ref || ""],
-  ].map(([k, v, t]) => `<div title="${esc(t || "")}"><b>${k}</b><span>${esc(v)}</span></div>`).join("");
   let a = "";
   if (c.image_mismatch) a += `<div class="errbox">The nodes run different image IDs. Ray requires identical builds.</div>`;
   if (c.workers_down?.length) a += `<div class="warnbox">Worker without a running container: ${esc(c.workers_down.join(", "))}</div>`;
@@ -757,20 +749,26 @@ function render() {
   if (c.mem_low?.length) a += `<div class="warnbox">Low free memory on ${esc(c.mem_low.join(", "))}. The kernel OOM killer may start killing services.</div>`;
   if (c.errors?.length) a += `<details style="margin-top:10px"><summary>${c.errors.length} error line(s) since start</summary><pre>${esc(c.errors.join("\n"))}</pre></details>`;
   if (!c.healthy && c.last_log) a += `<div class="lastlog" title="${esc(c.last_log)}"><a href="logs/0">head log →</a> ${esc(c.last_log.replace(/^\S+ /, "").replace(/\x1b\[[0-9;]*m|\[(?:\d{1,2};?)+m/g, ""))}</div>`;
-  $("#sdot").className = $("#tdot").className = "dot " + cls;
+  $("#tdot").className = "dot " + cls;
   setFavicon(cls);
   $("#whoami").textContent = cfg.user || "";
   $("#avatar").textContent = (cfg.user || "·")[0].toUpperCase();
-  $("#tstate").textContent = $("#state").textContent;
+  $("#tstate").textContent = stateText;
   drawVersion(cfg);
   $("#alerts").innerHTML = a;
 
   const busy = S.action?.name;
   document.querySelectorAll("[data-a]").forEach(b => b.disabled = !!busy);
+  // only what makes sense now: no Start while it runs, no Stop when nothing runs
+  const anyUp = (S.nodes || []).some(n => n.container?.running);
+  const startB = document.querySelector('[data-a="start"]'), stopB = document.querySelector('[data-a="stop"]');
+  if (startB) { startB.disabled = !!busy || anyUp; startB.classList.toggle("primary", !anyUp); }
+  if (stopB) stopB.disabled = !!busy || !anyUp;
   $("#rebootBtn").disabled = busy;
   $("#rebootBtn").style.display = cfg.allow_reboot ? "" : "none";
   $("#actionInfo").textContent = busy ? `Running: ${busy} (since ${hhmm(new Date(S.action.started*1000))})` : "";
 
+  const clusterUp = (S.nodes || []).some(n => n.container?.running);
   $("#nodes").innerHTML = (S.nodes || []).map((n, i) => {
     const k = n.container, g = n.gpu || {}, m = n.mem || {};
     const used = m.total ? (m.total - m.available) : null;
@@ -778,7 +776,10 @@ function render() {
     const st = !n.reachable ? ["err", "unreachable"] : !k ? ["err", "no container"]
       : k.running ? ["ok", k.state] : ["err", `${k.state} (exit ${k.exit_code})`];
     return `<div class="card node">
-      <h3><span class="dot ${st[0]}"></span>${esc(n.role)} · ${esc(n.host)} <span class="muted">${esc(n.hostname || "")}</span></h3>
+      <h3><span class="dot ${st[0]}"></span>${esc(n.role)} · ${esc(n.host)} <span class="muted">${esc(n.hostname || "")}</span>
+        <span style="margin-left:auto">${n.role === "worker"
+          ? `<button class="small danger" data-rm="${esc(n.host)}" ${clusterUp ? "disabled title='Stop the cluster first'" : ""}>Remove</button>`
+          : `<button class="small" data-headedit="1" ${clusterUp ? "disabled title='Stop the cluster first'" : ""}>Change address</button>`}</span></h3>
       <div class="kv">
         <div><b>SSH</b><span>${n.reachable ? n.latency_ms + " ms" : "–"}</span></div>
         <div><b>Container</b><span>${esc(st[1])}</span></div>
@@ -1168,15 +1169,7 @@ const OPSNUM = [
 function renderSparks() {
   const cfg = S.config, st = S.setup || {}, running = (S.nodes || []).some(n => n.container?.running);
   const nodes = [{role: "head", host: cfg.head}, ...(cfg.workers || []).map(h => ({role: "worker", host: h}))];
-  const live = h => (S.nodes || []).find(n => n.host === h) || {};
-  $("#sparks").innerHTML = nodes.map(n => {
-    const l = live(n.host), cls = !l.reachable ? "err" : l.container?.running ? "ok" : "warn";
-    const what = !l.reachable ? "the app can't reach it yet" : l.container?.running ? "running" : "ready, not running";
-    return `<div class="sparkrow"><span class="dot ${cls}"></span><b>${esc(n.role)}</b>
-      <span><code>${esc(n.host)}</code> <span class="muted">${esc(l.hostname || "")} · ${what}</span></span>
-      <span>${n.role === "worker" ? `<button class="small danger" data-rm="${esc(n.host)}" ${running ? "disabled title='Stop the cluster first'" : ""}>Remove</button>`
-        : `<button class="small" id="headEdit" ${running ? "disabled title='Stop the cluster first'" : ""}>Change address</button>`}</span></div>`;
-  }).join("") + `<p class="muted" style="margin:10px 0 0">${nodes.length === 1
+  $("#sparks").innerHTML = `<p class="muted" style="margin:0">${nodes.length === 1
       ? "One Spark: it runs the models that fit on one. Add a second for the big ones."
       : `${nodes.length} Sparks: the model is split across all of them (tensor parallelism over the cluster link).`
         + (nodes.length % 2 ? ` <span style="color:var(--warn)">Most models split only over 2, 4 or 8 Sparks (the count has to divide the model's attention heads), so ${nodes.length} may not start.</span>` : "")}
@@ -1199,12 +1192,7 @@ function renderSparks() {
   $("#addLinkCmd").textContent = `ip -br link   # the port the QSFP cable is in shows UP\n`
     + `sudo nmcli con add type ethernet ifname <port> con-name cluster ipv4.method manual ipv4.addresses ${sub}.${k}/24\n`
     + `sudo nmcli con up cluster`;
-  document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => nodesCall("remove", b.dataset.rm,
-    `Remove ${b.dataset.rm} from the cluster? The model and files on it stay; the app stops managing it.`));
-  const he = $("#headEdit"); if (he) he.onclick = () => {
-    const h = prompt("The head's address on the cluster link (the app reaches the head and the API there):", cfg.head);
-    if (h && h.trim() !== cfg.head) nodesCall("head", h.trim());
-  };
+
 }
 async function nodesCall(action, host, ask, force) {
   if (ask && !confirm(ask)) return;
@@ -1217,6 +1205,15 @@ async function nodesCall(action, host, ask, force) {
   $("#addHost").value = "";
   await refresh(); try { await loadModels(); } catch (e) {}
 }
+// Remove / Change address sit on the node cards, which are redrawn on every refresh
+$("#nodes").addEventListener("click", e => {
+  const rm = e.target.closest("[data-rm]"), he = e.target.closest("[data-headedit]");
+  if (rm) nodesCall("remove", rm.dataset.rm, `Remove ${rm.dataset.rm} from the cluster? The model and files on it stay; the panel stops managing it.`);
+  if (he) {
+    const h = prompt("The head's address on the cluster link (the panel reaches the head and the API there):", S.config.head);
+    if (h && h.trim() !== S.config.head) nodesCall("head", h.trim());
+  }
+});
 $("#addBtn").onclick = () => { const h = $("#addHost").value.trim() || $("#addHost").placeholder; nodesCall("add", h); };
 
 // ---------- GarageAI: what the agent reads on the head; the portal is the source of truth ----------
