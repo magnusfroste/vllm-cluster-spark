@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.23.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.24.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1746,6 +1746,13 @@ async def api_credentials(request: Request):
     """The Hugging Face token, set from the page. It is checked against Hugging Face before it
     is saved; an empty value removes it. HF_TOKEN in env wins and can't be changed here."""
     b = await request.json()
+    if "deploy_webhook" in b:  # Easypanel's (or any) deploy URL, for the Upgrade button
+        u = str(b.get("deploy_webhook") or "").strip()
+        if u and not re.match(r"^https?://[^\s]+$", u):
+            raise HTTPException(400, "the deploy webhook must start with http:// or https://")
+        save_creds({"deploy_webhook": u})
+        event("deploy webhook " + ("saved" if u else "removed") + " under Settings")
+        return {"ok": True}
     tok = str(b.get("hf_token") or "").strip()
     if HF_TOKEN:
         raise HTTPException(409, f"HF_TOKEN is set in the app's env, which wins. Change it in {ENV_WHERE}.")
@@ -1917,12 +1924,50 @@ def newer(a, b):
         return False
 
 
+def upgrade_method():
+    """script: install.sh on the head (the agent runs it); webhook: a deploy URL (Easypanel) set under
+    Settings; manual: neither, so the page says what to do."""
+    if _m:
+        return "script"
+    return "webhook" if load_creds().get("deploy_webhook") else "manual"
+
+
 @app.get("/api/version", dependencies=[Depends(auth)])
-def api_version():
+def api_version(fresh: int = 0):
+    if fresh:
+        _latest["ts"] = 0
     latest = latest_version()
     return {"version": APP_VERSION, "latest": latest, "update": newer(latest, APP_VERSION),
             "repo": f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else None,
-            "update_hint": UPDATE_HINT or "redeploy the app in Easypanel"}
+            "update_hint": UPDATE_HINT or "redeploy the app in Easypanel", "upgrade": upgrade_method(),
+            "deploy_webhook_set": bool(load_creds().get("deploy_webhook"))}
+
+
+@app.post("/api/upgrade", dependencies=[Depends(auth)])
+def api_upgrade():
+    """Upgrade the panel to the newest version. The cluster keeps running; only the panel restarts."""
+    how = upgrade_method()
+    if how == "script":
+        rc, res, err = ssh(HEAD_HOST, f"self-update {os.path.basename(_m.group(1))}", timeout=30)
+        if not (res and res.get("rc") == 0):
+            msg = (res or {}).get("out") or (res or {}).get("error") or err
+            if "unknown command" in str(msg):
+                msg = "the agent on the head is too old to update the panel; install it again under Nodes"
+            raise HTTPException(502, redact(str(msg))[-300:])
+    elif how == "webhook":
+        url = load_creds()["deploy_webhook"]
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"), timeout=30) as r:
+                if r.status >= 300:
+                    raise HTTPException(502, f"the deploy webhook answered HTTP {r.status}")
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"the deploy webhook did not answer: {redact(str(e))[:200]}")
+    else:
+        raise HTTPException(409, "redeploy the panel in Easypanel, or paste its deploy webhook under Settings")
+    event(f"panel upgrade started ({how}) from {APP_VERSION} to {_latest.get('version') or 'the newest'}")
+    return {"ok": True, "how": how, "from": APP_VERSION}
 
 
 @app.get("/api/apikey", dependencies=[Depends(auth)])

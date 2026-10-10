@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "11"
+VERSION = "12"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -534,6 +534,19 @@ def remove_image(iid):
     out({"rc": rc, "out": (so + se)[-500:]})
 
 
+def self_update(d):
+    """Update the panel that runs from install.sh: start `install.sh --update` on this node, detached,
+    because it replaces the panel's container (the one asking). Only ~/<dir>/install.sh."""
+    home = os.path.expanduser("~")
+    path = os.path.realpath(os.path.join(home, d, "install.sh"))
+    if not re.match(r"^[A-Za-z0-9_.-]+$", d) or not path.startswith(home + "/") or not os.path.isfile(path):
+        return out({"rc": 1, "out": f"no install.sh in ~/{d}"})
+    log = os.path.join(os.path.dirname(path), "update.log")
+    subprocess.Popen(["nohup", "bash", path, "--update"], stdout=open(log, "a"), stderr=subprocess.STDOUT,
+                     stdin=subprocess.DEVNULL, start_new_session=True, cwd=os.path.dirname(path))
+    out({"rc": 0, "out": f"started; log in {log}"})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -564,6 +577,8 @@ def main():
         readfile(c, args[0])
     elif cmd == "put" and args:
         putfile(c, args[0])
+    elif cmd == "self-update" and args:
+        self_update(args[0])
     elif cmd == "images":
         images()
     elif cmd == "remove-image" and args:

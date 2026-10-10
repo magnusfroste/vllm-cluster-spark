@@ -255,6 +255,8 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
 .gsteps small { display: block; color: var(--muted); }
 .gsteps .gact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 #guideShow { margin-top: 4px; }
+.vnewer { color: var(--warn); font-weight: 600; }
+.upgradebtn { display: block; width: 100%; margin-top: 8px; }
 .credgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 32px; }
 .credgrid > div > b { font-size: 15px; }
 .credgrid input[type=password] { flex: 1; min-width: 180px; }
@@ -587,6 +589,19 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   <section class="card">
     <div id="ops" class="muted">Loading…</div>
   </section>
+  <section class="card" id="updatesCard">
+    <h2>Updates</h2>
+    <div id="updState" class="muted" style="margin-bottom:8px">…</div>
+    <div id="updHook">
+      <label class="field">Deploy webhook (Easypanel: the service's Deploy → webhook URL)
+        <span class="row"><input type="password" id="hookUrl" placeholder="http://…/api/deploy/…" autocomplete="off">
+        <button class="small primary" id="hookSave">Save</button></span></label>
+      <small class="muted">With it, <b>Upgrade</b> at the bottom of the menu redeploys the panel from here. Inside Easypanel the panel reaches
+        Easypanel at the Docker host, so use <code>http://172.17.0.1:3000/…</code> rather than <code>127.0.0.1</code>.</small>
+      <div id="hookInfo" class="muted" style="margin-top:6px"></div>
+    </div>
+    <button class="small" id="updCheck" style="margin-top:8px">Check for updates now</button>
+  </section>
   <section class="card" id="credsCard">
     <h2>Hugging Face</h2>
     <div class="credgrid">
@@ -755,14 +770,35 @@ function renderDash() {
 // ---------- version, linked to the repo, with an hourly update check ----------
 let V = null;
 async function loadVersion() { try { V = await (await fetch("api/version")).json(); } catch (e) {} if (S) drawVersion(S.config); }
+// Like AgentHotel: the version links to the history, a newer one shows next to it, and the button upgrades.
+let upgrading = false;
 function drawVersion(cfg) {
   const repo = V?.repo;
   const ver = repo ? `<a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" title="Version history on GitHub">vLLM Panel ${esc(cfg.version)}</a>`
                    : `vLLM Panel ${esc(cfg.version)}`;
-  const upd = V?.update ? ` · <a href="${esc(repo)}/commits/main" target="_blank" rel="noopener" style="color:var(--warn)" title="Newer on GitHub: ${esc(V.latest)}. To update: ${esc(V.update_hint || "")}">update available (${esc(V.latest)})</a>`
-    + (V.update_hint ? `<br><span class="muted">update: <code>${esc(V.update_hint)}</code></span>` : "") : "";
-  $("#version").innerHTML = `${ver} · agent v${esc(cfg.agent_version)}${upd}`
-    + (repo ? `<br><a href="${esc(repo)}" target="_blank" rel="noopener">GitHub ↗</a>` : "");
+  const newer = V?.update ? ` <a class="vnewer" href="${esc(repo)}/commits/main" target="_blank" rel="noopener"
+      title="${esc(V.latest)} is newer. See what changed on GitHub.">→ ${esc(V.latest)}</a>` : "";
+  $("#version").innerHTML = `${ver}${newer} · agent v${esc(cfg.agent_version)}`
+    + (repo ? `<br><a href="${esc(repo)}" target="_blank" rel="noopener">GitHub ↗</a>` : "")
+    + (V?.update ? `<button class="small primary upgradebtn" id="upgradeBtn" ${upgrading ? "disabled" : ""}>${upgrading ? "Upgrading…" : "Upgrade to " + esc(V.latest)}</button>` : "");
+  const b = $("#upgradeBtn"); if (b) b.onclick = upgradePanel;
+}
+async function upgradePanel() {
+  if (V.upgrade === "manual") {
+    alert("This panel runs in Easypanel: press Deploy on its service there.\n\nOr paste the service's deploy webhook under Settings → Updates, and this button does it from here.");
+    location.hash = "#settings"; return;
+  }
+  if (!confirm(`Upgrade vLLM Panel to ${V.latest}? The panel restarts and is away for a minute or two; the model keeps running.`)) return;
+  upgrading = true; drawVersion(S.config);
+  const r = await fetch("api/upgrade", {method: "POST"});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { upgrading = false; drawVersion(S.config); return alert(d.detail || r.status); }
+  const before = V.version, deadline = Date.now() + 15 * 60 * 1000;
+  const poll = setInterval(async () => {  // the panel restarts: wait for a different version, then reload
+    if (Date.now() > deadline) { clearInterval(poll); upgrading = false; drawVersion(S.config);
+      return alert("The upgrade is taking longer than expected. See Events, or ~/vllmapp/update.log on the head."); }
+    try { const v = await (await fetch("api/version")).json(); if (v.version && v.version !== before) { clearInterval(poll); location.reload(); } } catch (e) {}
+  }, 5000);
 }
 loadVersion(); setInterval(loadVersion, 3600 * 1000);
 
@@ -905,6 +941,7 @@ function render() {
   renderDisk();
   if (!opsDrawn) renderOps();
   renderCreds();
+  renderUpdates();
   renderSparks();
   drawDeployment();
   if (M) drawModels(true);  // header only: running model and pending restart
@@ -1723,6 +1760,23 @@ async function chatSend(quick) {
   } catch (e) { reply.error = e.name === "AbortError" ? "Stopped." : String(e.message || e); }
   reply.done = true; chatAbort = null; $("#chatStop").style.display = "none"; $("#chatSend").disabled = false; chatDraw();
 }
+
+function renderUpdates() {
+  if (!V) return;
+  const how = {script: "Installed with install.sh: <b>Upgrade</b> runs <code>install.sh --update</code> on the head.",
+               webhook: "In Easypanel, with its deploy webhook: <b>Upgrade</b> redeploys the panel from here.",
+               manual: "In Easypanel without a deploy webhook: upgrade by pressing Deploy on the service there, or save its webhook below."}[V.upgrade] || "";
+  $("#updState").innerHTML = `Running ${esc(V.version)}${V.latest ? (V.update ? `, <b style="color:var(--warn)">${esc(V.latest)} is out</b>` : ", the newest") : ""}. ${how}`;
+  $("#updHook").style.display = V.upgrade === "script" ? "none" : "";
+  if (V.deploy_webhook_set && !$("#hookUrl").value) $("#hookUrl").placeholder = "saved — paste a new one to replace it";
+}
+$("#hookSave").onclick = async () => {
+  const r = await fetch("api/credentials", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({deploy_webhook: $("#hookUrl").value.trim()})});
+  const d = await r.json();
+  $("#hookInfo").innerHTML = r.ok ? `<span style="color:var(--ok)">Saved.</span>` : `<span style="color:var(--err)">${esc(d.detail || r.status)}</span>`;
+  $("#hookUrl").value = ""; await loadVersion(); renderUpdates();
+};
+$("#updCheck").onclick = async () => { try { V = await (await fetch("api/version?fresh=1")).json(); } catch (e) {} drawVersion(S.config); renderUpdates(); };
 
 function renderCreds() {
   const hf = S.setup?.hf || {}, cfg = S.config;
