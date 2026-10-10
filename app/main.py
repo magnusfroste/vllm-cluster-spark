@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.24.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.24.1"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1957,7 +1957,9 @@ def api_upgrade():
     elif how == "webhook":
         url = load_creds()["deploy_webhook"]
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"), timeout=30) as r:
+            # Easypanel refuses a form-encoded POST (415); an empty JSON body is what it takes
+            req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
                 if r.status >= 300:
                     raise HTTPException(502, f"the deploy webhook answered HTTP {r.status}")
         except HTTPException:
