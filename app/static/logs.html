@@ -82,7 +82,7 @@ let lines = [], lastTs = "", follow = true, timer = null, busy = false;
 const kind = t => /Traceback|\bERROR\b|Error:|Exception|Timed out|out of memory|failed/i.test(t) ? "error"
   : /\bWARN(ING)?\b|\bW \d/.test(t) ? "warn"
   : /Application startup complete|Ray runtime started|All nodes up|Alla noder uppe/.test(t) ? "ok" : "";
-const noise = t => /"GET \/(health|metrics|v1\/models) HTTP/.test(t) || /shm_broadcast/.test(t);
+const noise = t => /"GET \/(health|metrics|version|v1\/models) HTTP/.test(t) || /shm_broadcast/.test(t);
 
 function parse(raw) {
   const i = raw.indexOf(" ");

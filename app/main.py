@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.24.1"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.25.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -71,6 +71,7 @@ PORT = int(env("PORT", "8080"))
 # Operational settings, changed in the app. An env value wins and shows as locked.
 OPS = {  # key: (env, type, default, min, max)
     "auto_recover": ("AUTO_RECOVER", bool, False),
+    "access_log": ("ACCESS_LOG", bool, True),  # vLLM logs a line per API request; applies at the next start
     "allow_reboot": ("ALLOW_REBOOT", bool, False),
     "auto_reboot": ("AUTO_REBOOT", bool, False),
     "stall_timeout_min": ("STALL_TIMEOUT_MIN", float, 5, 1, 60),  # startup with no new log line
@@ -714,7 +715,7 @@ def setup_summary(nodes, running=()):
             "agent_version": AGENT_VERSION, "nodes": per,
             "pending": CONFIG_MODE == "managed" and (
                 applied is not None and any(applied.get(k, d) != v for k, v in applied_key(c).items()
-                                            for d in [{"executor": "ray", "env": {}, "nodes": v}.get(k)])
+                                            for d in [{"executor": "ray", "env": {}, "nodes": v, "access_log": v}.get(k)])
                 or bool(running) and bool(c["served_model_name"]) and c["served_model_name"] not in running),
             "model_ready": bool(c["model"]) and all((p["model"] or {}).get("present") for p in per)}
 
@@ -722,7 +723,7 @@ def setup_summary(nodes, running=()):
 def applied_key(c):
     """What decides the rendered config, to tell whether a restart is needed to apply it."""
     return {**{k: c[k] for k in (*MODEL_KEYS, "patchset", "executor", "env")},
-            "nodes": [n["host"] for n in NODES]}
+            "nodes": [n["host"] for n in NODES], "access_log": ops()["access_log"]}
 
 
 # ---------- usage statistics ----------
@@ -1196,7 +1197,7 @@ rm -rf /root/.cache/vllm/flashinfer_autotune_cache
 if [ "${NUM_NODES:-1}" -le 1 ]; then
   echo "Starting vLLM with ${MODEL} (one node)"
   exec vllm serve "${MODEL}" --tensor-parallel-size "${TP_SIZE:-1}" \
-    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" --disable-uvicorn-access-log ${VLLM_EXTRA_ARGS:-}
+    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" ${NO_ACCESS_LOG:-} ${VLLM_EXTRA_ARGS:-}
 fi
 
 if [ "${EXECUTOR:-ray}" = "mp" ]; then
@@ -1209,7 +1210,7 @@ if [ "${EXECUTOR:-ray}" = "mp" ]; then
   fi
   echo "Starting vLLM with ${MODEL} (multiprocessing executor, node rank 0)"
   exec vllm serve "${MODEL}" "${MP_ARGS[@]}" \
-    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" --disable-uvicorn-access-log ${VLLM_EXTRA_ARGS:-}
+    --host 0.0.0.0 --port 8000 --api-key "${VLLM_API_KEY}" ${NO_ACCESS_LOG:-} ${VLLM_EXTRA_ARGS:-}
 fi
 
 if [ "$ROLE" = "worker" ]; then
@@ -1233,7 +1234,7 @@ exec vllm serve "${MODEL}" \
   --distributed-executor-backend ray \
   --host 0.0.0.0 --port 8000 \
   --api-key "${VLLM_API_KEY}" \
-  --disable-uvicorn-access-log \
+  ${NO_ACCESS_LOG:-} \
   ${VLLM_EXTRA_ARGS:-}
 """
 
@@ -1277,6 +1278,7 @@ def render(i, n, c=None):
         f"NUM_NODES={len(NODES)}",
         f"NODE_RANK={i}",
         f"EXECUTOR={c['executor']}",
+        f"NO_ACCESS_LOG={'' if ops()['access_log'] else '--disable-uvicorn-access-log'}",
         "MASTER_PORT=29501",
         f"TP_SIZE={TP_SIZE or len(NODES)}",
         f"MODEL={c['model']}",

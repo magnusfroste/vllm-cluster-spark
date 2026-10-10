@@ -1282,6 +1282,7 @@ const OPS = [
   ["auto_recover", "Restart a hung cluster automatically", "When startup stalls or a running cluster stops answering, the app restarts it."],
   ["allow_reboot", "Show the reboot button", "Needs the passwordless reboot line from Setup on every node."],
   ["auto_reboot", "Reboot the nodes if a restart didn't help", "Last automatic step, at most once every 6 hours."],
+  ["access_log", "Log every API request in the vLLM log", "One line per request (method, path, status), so Logs shows the traffic as it comes. The panel's own checks are hidden in Logs. Applies at the next Redeploy."],
 ];
 const OPSNUM = [
   ["stall_timeout_min", "Startup counts as hung after this many minutes without a new log line"],
