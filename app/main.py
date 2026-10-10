@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 
 
 def env(name, default=""):
@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.22.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.23.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -1994,6 +1994,39 @@ async def api_delete_model(request: Request):
     if failed:
         raise HTTPException(502, f"could not delete on {', '.join(failed)} — see Events")
     return {"ok": True}
+
+
+CHAT_KEYS = {"messages", "max_tokens", "stream", "stream_options", "response_format", "tools", "tool_choice",
+             "temperature", "top_p", "chat_template_kwargs"}
+
+
+@app.post("/api/chat", dependencies=[Depends(auth)])
+async def api_chat(request: Request):
+    """The Chat tab: the request goes straight to vLLM on the head with the panel's key, the reply
+    streams back as vLLM sends it. Only chat fields pass, and always to the model that runs."""
+    b = await request.json()
+    body = {k: v for k, v in b.items() if k in CHAT_KEYS}
+    if not isinstance(body.get("messages"), list) or not body["messages"]:
+        raise HTTPException(400, "no messages")
+    body["max_tokens"] = max(1, min(int(body.get("max_tokens") or 4096), 16384))
+    body["model"] = (STATUS["cluster"].get("models") or [cfg()["served_model_name"]])[0]
+    req = urllib.request.Request(f"http://{HEAD_HOST}:{VLLM_PORT}/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req, timeout=600)
+    except urllib.error.HTTPError as e:
+        return JSONResponse({"error": redact(e.read().decode("utf-8", "replace"))[:1000]}, e.code)
+    except Exception as e:  # noqa: BLE001 — not running, or the head is unreachable
+        return JSONResponse({"error": redact(str(e))}, 502)
+
+    def relay():
+        with r:
+            while True:
+                chunk = r.read1(65536) if hasattr(r, "read1") else r.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+    return StreamingResponse(relay(), media_type=r.headers.get("Content-Type", "text/event-stream"))
 
 
 @app.post("/api/test", dependencies=[Depends(auth)])

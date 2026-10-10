@@ -64,9 +64,9 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
 | | **Logs** | The vLLM container log of each node, live, with a filter |
 | | **Events** | What the panel and the cluster did: starts, config writes, downloads, automatic restarts |
-| **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy** |
+| **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy**, and **Chat** to test the model |
 | | **Models** | The model library: one card per model with **Deploy**, your own templates (also from a docker compose file), and the models on disk |
-| | **API** | The API addresses, model name and key, examples for curl, Python and OpenCode, and a test prompt |
+| | **API** | The API addresses, model name and key, and examples for curl, Python and OpenCode |
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
 | | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
 | **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the panel writes |
@@ -291,6 +291,12 @@ is there.
 as the model's template; what you change is kept for this deployment and marked against the
 template, and **Save & Redeploy** applies it (**Save** alone keeps it for the next restart).
 **Reset to the template** drops your changes. The templates themselves stay as they are.
+
+**Deployment → Chat** talks to the model straight through vLLM, with streaming answers, the time to
+the first token, tokens per second and the token counts. Quick prompts check a fresh deploy in a
+minute: identity, exact instructions, Swedish, reasoning, code, JSON, a tool call, speed and a
+system message in the middle of a chat. They are the same as in GarageAI's Operations Center, so
+a garage gets the same answers here as through the marketplace.
 
 ## Model cards and your own models
 
