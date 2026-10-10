@@ -76,10 +76,13 @@ panel and agent versions:
 
 - **Theme:** System follows the computer's light or dark setting; Light and Dark override it.
   The choice is kept in the browser and also applies to the log page and the login page.
-- **Version:** links to the commit history on GitHub, with a link to the repo under it. Once an
-  hour the panel checks the version on the repo's `main` branch and shows **update available**
-  when it is newer than the one running, with the command that updates it: `bash ~/vllmapp/install.sh --update`
-  for the script install, or deploy again in Easypanel.
+- **Version and Upgrade:** the version links to the history on GitHub. Once an hour (or with
+  **Settings → Updates → Check for updates now**) the panel looks at the version on the repo's
+  `main` branch; when it is newer, it shows next to yours, with an **Upgrade to …** button under it.
+  A script install upgrades through the agent on the head, which runs `install.sh --update`; in
+  Easypanel, paste the service's deploy webhook under **Settings → Updates** and the button
+  redeploys it. The model keeps running; only the panel restarts, and the page reloads when the
+  new version answers.
 
 The browser tab's icon shows the cluster's state: green when it answers, yellow while it
 starts, red on a problem.
