@@ -21,8 +21,13 @@ NAME="vllmapp"
 # 8080 is avoided on purpose: GarageAI's gateway may reach 11434, 1234, 8080 and 8000 on a
 # garage, and this admin page should not be one of them.
 PORT=8090
-DIR="${VLLMAPP_DIR:-$HOME/vllmapp}"
-DATA="${VLLMAPP_DATA:-$HOME/vllmapp-data}"
+# The copy of this script kept next to the settings knows its own directory, so
+# `install.sh --update` works from wherever it was installed (the panel's Upgrade runs it that way).
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [ -z "${VLLMAPP_DIR:-}" ] && [ -n "$HERE" ] && [ -f "$HERE/install.conf" ]; then DIR="$HERE"; else DIR="${VLLMAPP_DIR:-$HOME/vllmapp}"; fi
+DATA="${VLLMAPP_DATA:-}"
+[ -n "$DATA" ] || DATA="$( [ -f "$DIR/install.conf" ] && sed -n 's/^DATA=//p' "$DIR/install.conf" )"
+DATA="${DATA:-$HOME/vllmapp-data}"
 MODE=install
 PORT_GIVEN=0
 IMAGE_GIVEN=0
@@ -93,7 +98,7 @@ run_container() {
 }
 
 save_conf() {
-  printf 'PORT=%s\nIMAGE=%s\n' "$PORT" "$IMAGE" > "$DIR/install.conf"
+  printf 'PORT=%s\nIMAGE=%s\nDATA=%s\n' "$PORT" "$IMAGE" "$DATA" > "$DIR/install.conf"
   # Keep a copy of this script next to the settings, for --update and --uninstall. When it was
   # piped from curl there is no file to copy, so fetch it.
   if [ -f "$0" ]; then
@@ -167,7 +172,7 @@ if [ "$MODE" = update ]; then
   run_container
   save_conf
   ok "updated and running: $(docker inspect --format '{{.Config.Image}}' "$NAME")"
-  info "The cluster kept running; only the app restarted."
+  info "The cluster kept running; only the panel restarted."
   exit 0
 fi
 
