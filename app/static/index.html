@@ -560,21 +560,25 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
         <a href="https://app.garageai.eu/dashboard/offer-gpu" target="_blank" rel="noopener">app.garageai.eu → Offer your GPU</a>
         (new to GarageAI: <a href="https://app.garageai.eu/auth?intent=operator" target="_blank" rel="noopener">sign up as an operator</a>).
         Pick <b>vLLM</b> as the runtime, choose a garage name and accept the operator terms.</li>
-      <li><b>Run the command the portal shows on the head node</b> (<code id="gaHead"></code>), in a terminal or over SSH as
-        your normal user. It installs NetBird and a small heartbeat, which needs sudo, so the app can't run it for you.
-        Where the command says <code>&lt;YOUR_KEY&gt;</code>, put this cluster's API key:
+      <li><b>Install GarageAI Bridge on the head node</b> (<code id="gaHead"></code>) and connect, in a terminal or over SSH
+        as your normal user:
+        <pre>curl -fsSL https://raw.githubusercontent.com/magnusfroste/garageai/main/cli/install.sh | sh
+GARAGEAI_RUNTIME_API_KEY='&lt;the key below&gt;' garageai connect</pre>
+        Bridge shows a code and opens the portal: check it is your machine, pick the garage and approve. It finds vLLM and
+        its models, carries its own tunnel to the gateway (no NetBird, nothing opened) and installs a heartbeat; that part
+        asks for sudo, so the panel can't run it for you. The key vLLM was started with:
         <div class="row" style="margin-top:6px"><input type="password" id="gaKey" readonly style="max-width:420px" value="">
           <button class="small" id="gaKeyShow">Show</button><button class="small" id="gaKeyCopy">Copy</button></div>
-        <small class="muted">The setup key and register token in the command are one-time secrets for your terminal only:
-          this page never asks for them. Paste only the key, with nothing else inside the quotes.</small></li>
+        <small class="muted">Paste only the key, with nothing else inside the quotes. When something is off,
+          <code>garageai doctor</code> on the head says what and how to fix it.</small></li>
       <li><b>Offer the model.</b> When the status above shows the mesh and the heartbeat, go to
         <a href="https://app.garageai.eu/dashboard/garages" target="_blank" rel="noopener">My garages</a> → your garage →
         turn on <b>Offer</b> for the model (<span id="gaModel">…</span>). GarageAI runs an acceptance test; the model is
         sold once it passes. The portal shows whether it is live and what it earns.</li>
     </ol>
-    <details><summary>Run the command again later</summary>
-      <p class="muted">For a new register token, use <b>My garages → your garage → New command</b>. That command skips the
-        NetBird install and keeps the mesh connection. Only the head node needs GarageAI; the workers need nothing.</p></details>
+    <details><summary>Update Bridge, or connect again later</summary>
+      <p class="muted">Run the install line again to update Bridge; the heartbeat service picks up the new version. To link the
+        machine again, run <code>garageai connect</code>. Only the head node needs GarageAI; the workers need nothing.</p></details>
   </section>
   <section class="card" id="gaSwitch" style="display:none">
     <h2>After a model switch</h2>
@@ -1357,23 +1361,29 @@ function drawGarage() {
     Run the command under <a href="#nodes">Nodes → Install the agent on a node</a> on the head again.</div>`; return; }
   if (G.unreachable) { $("#gaStatus").innerHTML = `<div class="errbox">The app can't reach the head node: ${esc(G.error || "")}</div>`; return; }
   const ago = t => t ? dur(Date.now() / 1000 - t) + " ago" : "";
-  const rows = [
-    [G.netbird, "NetBird client installed", G.version ? `version ${esc(G.version)}` : "it comes with the command from the portal"],
-    [G.netbird && G.management === true, "Connected to the GarageAI mesh",
-      G.mesh_ip ? `address <code>${esc(G.mesh_ip)}</code>${G.fqdn ? ` · ${esc(G.fqdn)}` : ""}` : G.daemon ? `NetBird says: ${esc(G.daemon)}` : ""],
+  const viaBridge = !!G.bridge_tunnel;
+  const rows = viaBridge ? [
+    [true, "Connected with GarageAI Bridge", `${esc(G.bridge_version || "")} · its own tunnel to the gateway, no NetBird needed`],
     [G.heartbeat, "Heartbeat running", "reports the served models every 5 minutes"],
     [G.last ? G.last.ok : null, "Last report accepted by GarageAI",
-      G.last ? (G.last.ok ? ago(G.last.ts) : `rejected ${ago(G.last.ts)}: get a new command under My garages → New command`) : "no report yet"],
+      G.last ? (G.last.ok ? ago(G.last.ts) : `rejected ${ago(G.last.ts)}: run garageai doctor on the head`) : "no report yet"],
+  ] : [
+    [G.netbird, "NetBird client installed", G.version ? `version ${esc(G.version)}` : "comes with the older connect script"],
+    [G.netbird && G.management === true, "Connected to the GarageAI mesh",
+      G.mesh_ip ? `address <code>${esc(G.mesh_ip)}</code>${G.fqdn ? ` · ${esc(G.fqdn)}` : ""}` : G.daemon ? `NetBird says: ${esc(G.daemon)}` : ""],
+    [G.heartbeat, "Heartbeat running", `reports the served models every 5 minutes${G.connected_with === "script" ? " (the older connect script; GarageAI Bridge replaces it)" : ""}`],
+    [G.last ? G.last.ok : null, "Last report accepted by GarageAI",
+      G.last ? (G.last.ok ? ago(G.last.ts) : `rejected ${ago(G.last.ts)}`) : "no report yet"],
     [G.mesh_api === "401" || G.mesh_api === "200", "vLLM answers on the mesh address",
       G.mesh_api ? `HTTP ${esc(G.mesh_api)} from the head itself${G.mesh_api === "401" ? " (the key is required, as it should be)" : ""}` : ""],
   ];
-  const connected = G.netbird && G.management === true && G.heartbeat;
+  const connected = (viaBridge || (G.netbird && G.management === true)) && G.heartbeat;
   $("#gaStatus").innerHTML = `<div class="checks">${rows.map(([ok, label, d]) =>
       `<span class="${ok ? "y" : ok === false || ok === undefined ? "n" : "o"}">${ok ? "✓" : ok == null ? "·" : "✗"}</span>
        <span><b style="font-weight:500">${label}</b> <span class="muted">${d || ""}</span></span>`).join("")}</div>
     <p class="muted" style="margin:10px 0 0">${connected
       ? "Connected to the mesh and reporting. Whether a model is offered and live, and what it earns, the portal shows."
-      : G.netbird ? "Not fully connected yet. Run the portal's command again (step 2), or check <code>sudo netbird status</code> on the head."
+      : viaBridge || G.netbird ? "Not fully connected yet. Run <code>garageai doctor</code> on the head: it says what is wrong and how to fix it."
       : "Not connected to GarageAI. Follow the steps below if you want to offer this cluster's inference."}
       <span title="Checked by the app">· checked ${ago(G.checked)}</span></p>`;
   $("#gaSwitch").style.display = connected && model ? "" : "none";

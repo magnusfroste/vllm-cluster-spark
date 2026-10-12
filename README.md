@@ -356,15 +356,24 @@ Spark there are no such ports and the check doesn't show.
 
 ## Offering the cluster on GarageAI (optional)
 
-[GarageAI](https://www.garageai.eu) is a marketplace where GPU owners sell inference. The
-**GarageAI** page walks through connecting this cluster: create a garage in the portal with
-vLLM as the runtime, run the command the portal shows on the head node (it installs NetBird and
-a heartbeat with sudo, so the panel can't run it), use this cluster's API key where it says
-`<YOUR_KEY>`, then turn on **Offer** for the model in the portal. The page reads the result on
-the head without root: the NetBird tunnel, the heartbeat and its last report, and whether vLLM
-answers on the mesh address. It never asks for the portal's setup key or register token, and
-it doesn't say whether a model is live or what it earns: the portal does. After a model
-switch it reminds you to offer the new model. Only the head node needs GarageAI.
+[GarageAI](https://www.garageai.eu) is a marketplace where GPU owners sell inference. A garage
+connects with **GarageAI Bridge**: one line on the head node, then approve the machine in the
+browser.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/magnusfroste/garageai/main/cli/install.sh | sh
+```
+```bash
+GARAGEAI_RUNTIME_API_KEY='<this cluster's API key>' garageai connect
+```
+
+Bridge finds vLLM and its models, carries its own tunnel to the gateway (no NetBird, nothing
+opened to the internet) and installs a heartbeat; it asks for sudo, so the panel can't run it.
+Then turn on **Offer** for the model in the portal. The **GarageAI** page shows the key to use and
+reads the result on the head without root: Bridge's version and tunnel, the heartbeat and whether
+its last report was accepted. It doesn't say whether a model is live or what it earns: the portal
+does. After a model switch it reminds you to offer the new model. Only the head node needs
+GarageAI. Garages connected earlier with the connect script and NetBird show as such.
 
 ## Changing the model or the config
 

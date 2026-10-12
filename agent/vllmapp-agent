@@ -8,6 +8,7 @@ The command arrives in SSH_ORIGINAL_COMMAND and is allowlisted here.
 Config: ~/.config/vllmapp/agent.env (CLUSTER_DIR=...).
 """
 import json
+import shutil
 import os
 import re
 import shlex
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "12"
+VERSION = "13"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -475,11 +476,25 @@ def garage(port):
                         "version": st.get("daemonVersion")})
         except ValueError:
             res["error"] = (se or so).strip()[-200:]
-    rc, _, _ = run(["systemctl", "is-active", "--quiet", "garageai-heartbeat.timer"])
-    res["heartbeat"] = rc == 0
+    # GarageAI Bridge runs garageai-bridge.timer; the older connect script ran garageai-heartbeat.timer
+    unit = "garageai-heartbeat"
+    for u in ("garageai-bridge", "garageai-heartbeat"):
+        if run(["systemctl", "is-active", "--quiet", f"{u}.timer"])[0] == 0:
+            unit = u
+            break
+    res["heartbeat"] = run(["systemctl", "is-active", "--quiet", f"{unit}.timer"])[0] == 0
+    res["connected_with"] = "bridge" if unit == "garageai-bridge" else "script" if res["heartbeat"] else None
+    # Bridge's own tunnel (no NetBird): the gateway reaches the runtime through it on 127.0.0.1
+    res["bridge_tunnel"] = run(["systemctl", "is-active", "--quiet", "garageai-tunnel.service"])[0] == 0
+    for b in (shutil.which("garageai"), os.path.expanduser("~/.local/bin/garageai"), "/usr/local/lib/garageai/garageai"):
+        if b and os.access(b, os.X_OK):
+            rc, so, _ = run([b, "version"])
+            if rc == 0 and so.strip():
+                res["bridge_version"] = so.strip().splitlines()[0][:60]
+                break
     # The last report: exit 0 means GarageAI accepted it (the heartbeat uses curl -f). The reply
     # body is not a contract, so it is not read.
-    rc, so, _ = run(["systemctl", "show", "garageai-heartbeat.service", "-p", "ExecMainStatus",
+    rc, so, _ = run(["systemctl", "show", f"{unit}.service", "-p", "ExecMainStatus",
                      "-p", "ExecMainExitTimestamp", "--timestamp=unix"])
     kv = dict(l.split("=", 1) for l in so.splitlines() if "=" in l)
     ts = kv.get("ExecMainExitTimestamp", "").lstrip("@")
