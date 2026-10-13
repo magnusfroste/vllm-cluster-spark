@@ -488,3 +488,7 @@ The install script only wraps this. To build the image yourself instead:
 docker build -t vllmapp:latest .
 docker run -d --name vllmapp --restart unless-stopped -p 8090:8090 -e PORT=8090 --env-file .env -v ~/vllmapp-data:/data vllmapp:latest
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). The models you run have their own licenses; check each model's page on Hugging Face.
