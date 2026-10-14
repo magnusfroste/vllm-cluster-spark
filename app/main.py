@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.26.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.27.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -2051,14 +2051,16 @@ CHAT_KEYS = {"messages", "max_tokens", "stream", "stream_options", "response_for
 
 @app.post("/api/chat", dependencies=[Depends(auth)])
 async def api_chat(request: Request):
-    """The Chat tab: the request goes straight to vLLM on the head with the panel's key, the reply
-    streams back as vLLM sends it. Only chat fields pass, and always to the model that runs."""
+    """The Chat page: the request goes straight to vLLM on the head with the panel's key, the reply
+    streams back as vLLM sends it. Only chat fields pass, and only to a model that vLLM serves
+    (the first one, the running model, unless the page picked another)."""
     b = await request.json()
     body = {k: v for k, v in b.items() if k in CHAT_KEYS}
     if not isinstance(body.get("messages"), list) or not body["messages"]:
         raise HTTPException(400, "no messages")
     body["max_tokens"] = max(1, min(int(body.get("max_tokens") or 4096), 16384))
-    body["model"] = (STATUS["cluster"].get("models") or [cfg()["served_model_name"]])[0]
+    served = STATUS["cluster"].get("models") or [cfg()["served_model_name"]]
+    body["model"] = b.get("model") if b.get("model") in served else served[0]
     req = urllib.request.Request(f"http://{HEAD_HOST}:{VLLM_PORT}/v1/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"})
     try:

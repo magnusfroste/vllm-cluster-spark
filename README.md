@@ -61,10 +61,11 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | | Page | What it does |
 |---|---|---|
 | **Cluster** | **Overview** | A dashboard: status and the next step to take; load now (requests running and waiting, tokens per second, KV cache in use); the model; one line per node; today's tokens, requests and energy; the latest events. Each tile links to its page. Start, Restart, Stop, Pull image, Reboot |
+| | **Chat** | Talk to the running model, with streaming answers, reasoning, tool calls and speed, and quick prompts that check a fresh deploy. With more than one served model, pick which |
 | | **Nodes** | Setup checks per node (Docker, NVIDIA Container Toolkit, cluster link, RoCE, disk space) with the exact command for anything that needs `sudo`, the agent install command, and live GPU, memory and uptime per node |
 | | **Logs** | The vLLM container log of each node, live, with a filter |
 | | **Events** | What the panel and the cluster did: starts, config writes, downloads, automatic restarts |
-| **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy**, and **Chat** to test the model |
+| **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy** |
 | | **Models** | The model library: one card per model with **Deploy**, your own templates (also from a docker compose file), and the models on disk |
 | | **API** | The API addresses, model name and key, and examples for curl, Python and OpenCode |
 | | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
@@ -295,7 +296,7 @@ as the model's template; what you change is kept for this deployment and marked 
 template, and **Save & Redeploy** applies it (**Save** alone keeps it for the next restart).
 **Reset to the template** drops your changes. The templates themselves stay as they are.
 
-**Deployment → Chat** talks to the model straight through vLLM, with streaming answers, the time to
+**Chat** (in the menu, under Overview) talks to the model straight through vLLM, with streaming answers, the time to
 the first token, tokens per second and the token counts. Quick prompts check a fresh deploy in a
 minute: identity, exact instructions, Swedish, reasoning, code, JSON, a tool call, speed and a
 system message in the middle of a chat. They are the same as in GarageAI's Operations Center, so

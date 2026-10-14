@@ -4,6 +4,10 @@ vLLM Panel (formerly vllmapp): a panel to set up, run and monitor vLLM on one or
 Versions follow `APP_VERSION` in `app/main.py`. "Agent vN" is the SSH agent on the nodes: after an
 upgrade that names a new agent, install it again under **Nodes**.
 
+## 1.27.0 — 2026-10-14
+- **Chat** is its own page in the menu, right under Overview, instead of a tab under Deployment. It talks to the running model by default; when vLLM serves more than one model, a picker chooses which.
+- Deployment keeps Overview, Configuration and Environment; its Logs link is gone (Logs is in the menu). The API page no longer has a card that only pointed to the chat.
+
 ## 1.26.0 — 2026-10-12 (agent v13)
 - GarageAI page recognises **GarageAI Bridge**. It shows the Bridge version and tunnel (`garageai-tunnel.service`) and the heartbeat (`garageai-bridge.timer`). Garages on the older connect script + NetBird show as before.
 - The connect steps are now Bridge's: run the install line, then `garageai connect`, and approve in the browser.
