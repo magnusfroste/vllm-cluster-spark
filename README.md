@@ -376,6 +376,13 @@ its last report was accepted. It doesn't say whether a model is live or what it 
 does. After a model switch it reminds you to offer the new model. Only the head node needs
 GarageAI. Garages connected earlier with the connect script and NetBird show as such.
 
+The panel also tells Bridge what it is doing, in `~/.local/state/vllm-panel/state.json` on the head
+(serving, starting, maintenance, stopped or failed, and each node's status). Before a **Redeploy**,
+**Stop**, model change or reboot it writes *maintenance* first, so GarageAI stops sending requests
+within about 10 seconds, and it lets the requests that run finish (at most a minute) before it stops
+vLLM. Buyers are routed elsewhere instead of getting errors. Bridge only lets this file take the
+garage out of the pool, never put it back in.
+
 ## Changing the model or the config
 
 Pick another model in the panel, download it, and press **Restart**. The page says

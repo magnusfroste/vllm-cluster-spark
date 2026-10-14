@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "13"
+VERSION = "14"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -562,6 +562,26 @@ def self_update(d):
     out({"rc": 0, "out": f"started; log in {log}"})
 
 
+def panel_state():
+    """The panel's state for GarageAI Bridge, from stdin, to ~/.local/state/vllm-panel/state.json
+    (atomically, 0644). Bridge reads it as root and only lets it take the garage out of the pool."""
+    data = sys.stdin.read(70000)
+    try:
+        d = json.loads(data)
+    except ValueError:
+        return out({"rc": 1, "out": "not JSON"})
+    if len(data) > 65536 or not isinstance(d, dict) or d.get("schema") != 1:
+        return out({"rc": 1, "out": "not a schema 1 state"})
+    path = os.path.expanduser("~/.local/state/vllm-panel/state.json")
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=1)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+    out({"rc": 0, "path": path})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -611,6 +631,8 @@ def main():
         download_stop()
     elif cmd == "garage":
         garage(args[0] if args and args[0].isdigit() else "8000")
+    elif cmd == "panel-state":
+        panel_state()
     elif cmd == "version":
         out({"agent": VERSION})
     else:

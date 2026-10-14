@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.27.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.28.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -471,7 +471,7 @@ IGNORE_ERRORS = re.compile(r"RuntimeError: cancelled")
 STATUS = {"updated": 0, "nodes": [], "cluster": {}}
 UNHEALTHY_SINCE = None
 _action_lock = threading.Lock()
-CURRENT_ACTION = {"name": None, "started": 0}
+CURRENT_ACTION = {"name": None, "started": 0, "auto": False}
 
 
 def http_get(url, headers=None, timeout=5):
@@ -871,6 +871,108 @@ def watch_health():
         _watch["healthy"], _watch["down_sent"] = True, 0
 
 
+# ---------- GarageAI Bridge: the panel's state in a file on the head ----------
+# Bridge (root) reads ~<user>/.local/state/vllm-panel/state.json and honours only the states that
+# take the garage out of the pool (maintenance, starting, stopped); serving/failed are information.
+_life = {"kind": None, "reason": "", "since": 0, "until": None, "planned": None}
+_pstate = {"written": 0, "kind": None, "unsupported": 0, "error": None}
+START_ETA = 15 * 60  # a model start on a Spark takes 6-13 minutes
+
+
+def lifecycle():
+    """(kind, reason, until) as Bridge wants it: serving | starting | maintenance | stopped | failed."""
+    c = STATUS.get("cluster") or {}
+    st, a = c.get("state"), CURRENT_ACTION.get("name")
+    if _life["planned"]:
+        return "maintenance", _life["planned"], now() + START_ETA if _life["planned"] != "stop" else None
+    if c.get("healthy"):
+        return "serving", "", None
+    if c.get("hung"):
+        return "failed", c.get("hung_reason") or "the start hangs", None
+    if st == "starting" or a in ("start", "restart", "deploy", "reboot"):
+        started = now() - (c.get("uptime_s") or 0)
+        return "starting", "auto-recover" if CURRENT_ACTION.get("auto") else "start", started + START_ETA
+    if st in ("stopped", "no container"):
+        if load_state().get("stopped_on_purpose") or not cfg()["model"]:
+            return "stopped", "stopped in the panel" if cfg()["model"] else "no model chosen", None
+        return "failed", "the vLLM container exited", None
+    return "failed", st or "unknown", None
+
+
+def isoz(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def panel_state_doc():
+    kind, reason, until = lifecycle()
+    if kind != _life["kind"]:
+        _life.update(kind=kind, since=now())
+    _life.update(reason=reason, until=until)
+    c = cfg()
+    nodes = []
+    for n in STATUS.get("nodes") or []:
+        ct, g, m = n.get("container") or {}, n.get("gpu") or {}, n.get("mem") or {}
+        nodes.append({"name": n.get("hostname") or n.get("host"), "role": n.get("role"),
+                      "ok": bool(n.get("reachable") and ct.get("running")),
+                      "container": "running" if ct.get("running") else (ct.get("state") or "missing"),
+                      "gpu_temp_c": g.get("temp"), "gpu_power_w": g.get("power"), "gpu_util_pct": g.get("util"),
+                      "mem_available_mb": int(m["available"] / 2**20) if m.get("available") else None})
+    return {"schema": 1, "panel": f"vLLM Panel {APP_VERSION}", "updated": isoz(now()),
+            "state": {"kind": kind, "reason": reason, "since": isoz(_life["since"]),
+                      "until": isoz(until) if until else None},
+            "model": {"served_name": c["served_model_name"] or None,
+                      "max_model_len": int(c["max_model_len"]) if str(c.get("max_model_len") or "").isdigit() else None},
+            "nodes": nodes}
+
+
+def write_panel_state(force=False):
+    """On a change, and at least every 60 s (Bridge ignores a file older than 180 s)."""
+    if not NODES or (_pstate["unsupported"] and now() - _pstate["unsupported"] < 600):
+        return
+    doc = panel_state_doc()
+    if not force and doc["state"]["kind"] == _pstate["kind"] and now() - _pstate["written"] < 60:
+        return
+    rc, res, err = ssh(HEAD_HOST, "panel-state", timeout=20, input=json.dumps(doc))
+    if res and res.get("rc") == 0:
+        _pstate.update(written=now(), kind=doc["state"]["kind"], unsupported=0, error=None)
+    elif res and "unknown command" in str(res.get("error")):
+        _pstate.update(unsupported=now(), error="the agent on the head is older than v14")
+    else:
+        _pstate["error"] = redact(str((res or {}).get("out") or (res or {}).get("error") or err))[-200:]
+
+
+def running_requests():
+    vllm_counters()
+    return (_live["gauges"] or {}).get("running")
+
+
+def drain(reason):
+    """Before the panel stops the model: tell GarageAI Bridge (it takes the garage out of the pool
+    within about 10 s), then let the requests that run finish, at most a minute."""
+    _life["planned"] = reason
+    write_panel_state(force=True)
+    if not (STATUS.get("cluster") or {}).get("healthy"):
+        return
+    bridge = bool((_garage.get("res") or {}).get("heartbeat")) and _pstate["kind"] == "maintenance"
+    t0 = now()
+    while now() - t0 < 60:
+        n = running_requests()
+        if n is None or (n == 0 and (not bridge or now() - t0 >= 15)):
+            break
+        time.sleep(3)
+    left = running_requests()
+    if bridge or left or now() - t0 > 5:
+        event(f"before the {reason}: waited {dur(now() - t0)} for requests to finish"
+              + (f", {int(left)} still running" if left else "")
+              + (" (GarageAI Bridge was told first)" if bridge else ""))
+
+
+def started_on_purpose():
+    s = load_state()
+    if s.pop("stopped_on_purpose", None):
+        save_state(s)
+
+
 def poller():
     while True:
         try:
@@ -878,6 +980,7 @@ def poller():
             auto_recover()
             watch_health()
             deploy_when_ready()
+            write_panel_state()
         except Exception as e:  # noqa: BLE001
             event(f"polling error: {e}", "error")
         time.sleep(POLL_SECONDS)
@@ -960,11 +1063,16 @@ def do_start():
     preflight()
     write_config()
     drop_caches()
+    started_on_purpose()
     on_nodes(NODES[1:], "up")
     on_nodes(NODES[:1], "up")
 
 
 def do_stop():
+    drain("stop")
+    s = load_state()
+    s["stopped_on_purpose"] = True
+    save_state(s)
     on_nodes(NODES[:1], "stop")
     on_nodes(NODES[1:], "stop")
 
@@ -973,6 +1081,9 @@ def do_restart():
     model_check()
     preflight()
     write_config()
+    served = (STATUS.get("cluster") or {}).get("models") or []
+    drain("model change" if served and cfg()["served_model_name"] not in served else "redeploy")
+    started_on_purpose()
     # stop + up rather than compose restart, which would keep the old .env and compose.yaml
     on_nodes(NODES[:1], "stop")
     on_nodes(NODES[1:], "stop")
@@ -984,6 +1095,7 @@ def do_restart():
 def do_reboot():
     if not ops()["allow_reboot"]:
         raise RuntimeError("the reboot button is off under Settings")
+    drain("reboot")
     s = load_state()
     s["last_reboot"] = now()
     save_state(s)
@@ -1113,7 +1225,7 @@ ACTIONS = {"start": do_start, "stop": do_stop, "restart": do_restart,
 def start_action(name, auto=False):
     if not _action_lock.acquire(blocking=False):
         raise HTTPException(409, f"{CURRENT_ACTION['name']} is already running")
-    CURRENT_ACTION.update(name=name, started=now())
+    CURRENT_ACTION.update(name=name, started=now(), auto=auto)
     s = load_state()
     s["last_action"] = now()
     if auto:
@@ -1128,7 +1240,8 @@ def start_action(name, auto=False):
         except Exception as e:  # noqa: BLE001
             event(f"{name} failed: {e}", "error")
         finally:
-            CURRENT_ACTION.update(name=None, started=0)
+            CURRENT_ACTION.update(name=None, started=0, auto=False)
+            _life["planned"] = None  # the poller writes the next state from a fresh poll
             _action_lock.release()
 
     threading.Thread(target=run, daemon=True).start()
@@ -1508,7 +1621,8 @@ def api_garage(fresh: int = 0):
     c = cfg()
     return {**_garage["res"], "checked": _garage["ts"], "port": VLLM_PORT,
             "serving": (STATUS.get("cluster") or {}).get("models") or [],
-            "chosen": c["served_model_name"], "agent_version": AGENT_VERSION}
+            "chosen": c["served_model_name"], "agent_version": AGENT_VERSION,
+            "panel_state": {"kind": _pstate["kind"], "written": _pstate["written"], "error": _pstate["error"]}}
 
 
 # Flags the panel sets itself, from its own fields; an own template must not set them in its arguments.
