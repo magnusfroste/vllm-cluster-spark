@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.28.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.28.1"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -877,6 +877,7 @@ def watch_health():
 _life = {"kind": None, "reason": "", "since": 0, "until": None, "planned": None}
 _pstate = {"written": 0, "kind": None, "unsupported": 0, "error": None}
 START_ETA = 15 * 60  # a model start on a Spark takes 6-13 minutes
+DRAIN_MIN_S = 30  # Bridge polls every 10 s, then the heartbeat and the portal's routing sync
 
 
 def lifecycle():
@@ -948,16 +949,21 @@ def running_requests():
 
 def drain(reason):
     """Before the panel stops the model: tell GarageAI Bridge (it takes the garage out of the pool
-    within about 10 s), then let the requests that run finish, at most a minute."""
+    within about 10 s; with Bridge the panel waits at least DRAIN_MIN_S), then let the requests that
+    run finish, at most a minute."""
     _life["planned"] = reason
     write_panel_state(force=True)
     if not (STATUS.get("cluster") or {}).get("healthy"):
         return
+    if _garage["res"] is None or now() - _garage["ts"] > 600:  # the GarageAI page may never have been opened
+        rc, res, _ = ssh(HEAD_HOST, f"garage {VLLM_PORT}", timeout=40)
+        if res:
+            _garage.update(ts=now(), res=res)
     bridge = bool((_garage.get("res") or {}).get("heartbeat")) and _pstate["kind"] == "maintenance"
     t0 = now()
     while now() - t0 < 60:
         n = running_requests()
-        if n is None or (n == 0 and (not bridge or now() - t0 >= 15)):
+        if n is None or (n == 0 and (not bridge or now() - t0 >= DRAIN_MIN_S)):
             break
         time.sleep(3)
     left = running_requests()

@@ -4,6 +4,9 @@ vLLM Panel (formerly vllmapp): a panel to set up, run and monitor vLLM on one or
 Versions follow `APP_VERSION` in `app/main.py`. "Agent vN" is the SSH agent on the nodes: after an
 upgrade that names a new agent, install it again under **Nodes**.
 
+## 1.28.1 — 2026-10-14
+- With GarageAI Bridge, the drain before a stop waits at least 30 s (was 15 s), so GarageAI's routing has taken the garage out before vLLM stops. The panel checks for Bridge itself, also when the GarageAI page hasn't been opened.
+
 ## 1.28.0 — 2026-10-14 (agent v14)
 - **GarageAI Bridge knows what the panel does.** The panel writes its state to `~/.local/state/vllm-panel/state.json` on the head: serving, starting, maintenance, stopped or failed, with the reason, and each node's container, GPU temperature, power and use, and free memory. It is rewritten on every change and at least every minute.
 - **Drain before a stop.** On Redeploy, Stop, a model change or a reboot the panel first writes *maintenance* (Bridge takes the garage out of GarageAI's pool within about 10 s), then waits for running requests to finish, at most a minute, before it stops vLLM. Without GarageAI it only waits for running requests.
