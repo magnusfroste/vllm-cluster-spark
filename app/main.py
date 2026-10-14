@@ -35,7 +35,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.28.1"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.28.2"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -466,7 +466,10 @@ PHASES = [  # (pattern, phase) — the last match in the log wins
 ]
 ERRORS = re.compile(r"Traceback|RuntimeError|ValueError|Timed out|out of memory|No available memory"
                     r"|ActorDied|ActorHandleNotFound|RayWorkerError")
-IGNORE_ERRORS = re.compile(r"RuntimeError: cancelled")
+# Not errors: a cancelled request, and torch's own warnings (glog "W1014 ..." lines, e.g. the Triton
+# bundler that can't reload a cached cubin and simply compiles it again) — on 2026-10-14 those
+# made a healthy MiMo start look hung after 11 minutes and auto-recover restarted it twice.
+IGNORE_ERRORS = re.compile(r"RuntimeError: cancelled|triton_bundler|\]:W\d{4} ")
 
 STATUS = {"updated": 0, "nodes": [], "cluster": {}}
 UNHEALTHY_SINCE = None

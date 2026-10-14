@@ -4,6 +4,9 @@ vLLM Panel (formerly vllmapp): a panel to set up, run and monitor vLLM on one or
 Versions follow `APP_VERSION` in `app/main.py`. "Agent vN" is the SSH agent on the nodes: after an
 upgrade that names a new agent, install it again under **Nodes**.
 
+## 1.28.2 — 2026-10-14
+- The hang detector no longer counts torch's warnings as startup errors. Lines such as the Triton bundler's "Cubin file … not found" (it compiles the kernel again) made a healthy MiMo start look hung after 11 minutes, and auto-recover restarted it.
+
 ## 1.28.1 — 2026-10-14
 - With GarageAI Bridge, the drain before a stop waits at least 30 s (was 15 s), so GarageAI's routing has taken the garage out before vLLM stops. The panel checks for Bridge itself, also when the GarageAI page hasn't been opened.
 
