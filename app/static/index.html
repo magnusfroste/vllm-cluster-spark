@@ -544,6 +544,10 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
     </div>
     <div id="usage" class="muted">Loading…</div>
   </section>
+  <section class="card" id="sourcesCard">
+    <h2>Who used it</h2>
+    <div id="sources" class="muted">Loading…</div>
+  </section>
   </div>
   <div class="page" data-page="garageai">
     <div class="pagehead"><h1>GarageAI</h1><span class="muted">Offer this cluster's inference on <a href="https://www.garageai.eu" target="_blank" rel="noopener">garageai.eu</a> — optional</span></div>
@@ -1950,6 +1954,7 @@ function drawUsage() {
   const sum = k => list.reduce((a, b) => a + b[k], 0);
   const tin = sum("prompt"), tout = sum("gen"), kwh = sum("wh") / 1000, req = sum("requests"), cached = sum("cached");
   const per = (n, e) => e > 0 ? short(n / e) : "–";
+  const E = loadEfficiency(list);
   $("#usageRange").textContent = usageBy === "day" ? "last 14 days" : "last 12 weeks";
   const empty = !U.rows.length;
   $("#usage").innerHTML = (empty ? `<p style="margin:8px 0 0">Nothing recorded yet. The app counts tokens and energy from now on.</p>` : "") +
@@ -1957,7 +1962,8 @@ function drawUsage() {
       <div class="tile"><b>Input tokens</b><span>${short(tin)}</span><small>${tin ? Math.round(100 * cached / tin) : 0} % from the prefix cache</small></div>
       <div class="tile"><b>Output tokens</b><span>${short(tout)}</span><small>${nf(req)} requests</small></div>
       <div class="tile"><b>Energy</b><span>${kwh.toFixed(kwh < 10 ? 2 : 1)} kWh</span><small>${U.extra_watts ? `GPU + ${U.extra_watts} W per node` : "GPU only"}</small></div>
-      <div class="tile"><b>Tokens per kWh</b><span>${per(tin + tout, kwh)}</span><small>output only: ${per(tout, kwh)}</small></div>
+      <div class="tile"><b>Output tokens per kWh</b><span>${E ? short(E.out) : per(tout, kwh)}</span>
+        <small>${E ? `under load (${E.busy} busy hours) · idle ~${Math.round(E.idleW)} W · all hours ${per(tout, kwh)}` : "all hours, idle included"}</small></div>
     </div>
     <div class="charts">
       ${colChart("Input tokens", list, b => b.prompt)}
@@ -1970,7 +1976,10 @@ function drawUsage() {
         <td>${nf(b.requests)}</td><td>${(b.wh / 1000).toFixed(2)}</td><td>${b.wh ? nf((b.prompt + b.gen) / (b.wh / 1000)) : "–"}</td></tr>`).join("")}</table></details>
     <p class="muted" style="font-size:12px">Energy is the GPU power from <code>nvidia-smi</code> on every node, all the time (idle included),
       ${U.extra_watts ? `plus ${U.extra_watts} W per node for the rest of the box` : "which leaves out CPU, memory, network and disks. Add the rest under <a href=\"#settings\">Settings</a> to get the whole box"}.
-      Counting starts when this version of the app is deployed.</p>`;
+      Counting starts when this version of the app is deployed.
+      <b>Under load</b> counts only the hours when the GPUs drew clearly more than at rest (at least 1.4 × the idle draw, with output),
+      which is the fair number to compare models and machines by; <b>all hours</b> includes the idle ones.</p>`;
+  drawSources(list);
   document.querySelectorAll("#usage svg").forEach(svg => {
     const title = svg.dataset.title;
     svg.querySelectorAll(".hit").forEach(h => {
@@ -1980,6 +1989,42 @@ function drawUsage() {
       h.onmouseleave = () => $("#tip").style.display = "none";
     });
   });
+}
+// Efficiency under load: idle hours would drown it. The idle draw is the lower quartile of the hours' energy
+// (both nodes, so watts), and a busy hour is one clearly above it that produced output.
+function loadEfficiency(list) {
+  const from = list[0].d.getTime() / 1000, cur = Math.floor(Date.now() / 3600000) * 3600, hours = {};
+  for (const r of U.rows) {
+    if (r.hour < from || r.hour >= cur) continue;  // the current hour is still filling
+    const h = hours[r.hour] ||= {wh: 0, gen: 0};
+    h.wh += r.gpu_wh + r.extra_wh; h.gen += r.gen;
+  }
+  const hs = Object.values(hours).filter(h => h.wh > 0);
+  if (hs.length < 6) return null;
+  const idleW = hs.map(h => h.wh).sort((a, b) => a - b)[Math.floor(hs.length / 4)];
+  const busy = hs.filter(h => h.wh >= idleW * 1.4 && h.gen > 0), wh = busy.reduce((a, h) => a + h.wh, 0);
+  return wh ? {idleW, busy: busy.length, out: busy.reduce((a, h) => a + h.gen, 0) / (wh / 1000)} : null;
+}
+// Requests per client, from vLLM's request log on the head (the agent counts them): tokens can't be told apart.
+function drawSources(list) {
+  const el = $("#sources");
+  if (U.sources_error && !U.sources.length) { el.innerHTML = esc(U.sources_error); return; }
+  if (!U.access_log) { el.innerHTML = `vLLM's request log is off under <a href="#settings">Settings</a>, so the panel can't tell who sent requests.`; return; }
+  const from = list[0].d.getTime() / 1000, by = {}, kinds = {};
+  for (const r of U.sources) {
+    if (r.hour < from) continue;
+    const s = by[r.label] ||= {label: r.label, kind: r.kind, n: 0}; s.n += r.requests;
+  }
+  const rows = Object.values(by).sort((a, b) => b.n - a.n), total = rows.reduce((a, r) => a + r.n, 0);
+  if (!total) { el.innerHTML = "No API requests in this period."; return; }
+  const ga = rows.filter(r => r.kind === "garageai").reduce((a, r) => a + r.n, 0);
+  el.innerHTML = `<p style="margin:0 0 10px">${nf(total)} API requests ${usageBy === "day" ? "in the last 14 days" : "in the last 12 weeks"}${ga
+      ? ` · <b>${Math.round(100 * ga / total)} %</b> came through GarageAI` : ""}.</p>
+    <table class="t">${rows.map(r => `<tr><td>${esc(r.label)}</td><td style="width:45%"><div class="bar"><i style="width:${(100 * r.n / rows[0].n).toFixed(1)}%"></i></div></td>
+      <td style="text-align:right">${nf(r.n)}</td><td style="text-align:right" class="muted">${Math.round(100 * r.n / total)} %</td></tr>`).join("")}</table>
+    <p class="muted" style="font-size:12px;margin-top:8px">Counted from vLLM's request log on the head${U.sources_since ? `, from ${esc(new Date(U.sources_since).toLocaleDateString("en-GB", {day: "numeric", month: "short"}))}` : ""}.
+      Requests only: vLLM doesn't say which client the tokens above belong to. GarageAI arrives through Bridge's tunnel (10.66.x.x);
+      a public address is a client that reaches the API directly or through a proxy such as Cloudflare or LiteLLM.</p>`;
 }
 document.querySelectorAll("[data-by]").forEach(b => b.onclick = () => {
   usageBy = b.dataset.by; document.querySelectorAll("[data-by]").forEach(x => x.classList.toggle("on", x === b)); drawUsage(); });

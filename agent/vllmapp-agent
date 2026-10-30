@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "14"
+VERSION = "15"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -582,6 +582,42 @@ def panel_state():
     out({"rc": 0, "path": path})
 
 
+ACCESS_LINE = re.compile(r'^(\S+) .*?INFO: +\[?([0-9a-fA-F.:]+?)\]?:\d+ - "POST (/v1/[a-z/]+)')
+COUNTED = {"/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/embeddings", "/v1/messages"}
+
+
+def ts_key(ts):
+    """Docker's RFC3339Nano drops trailing zeros; pad the fraction so timestamps compare as strings."""
+    head, _, frac = ts.rstrip("Z").partition(".")
+    return f"{head}.{frac.ljust(9, '0')[:9]}Z"
+
+
+def access(c, since):
+    """API requests per hour and client address in the head's vLLM log since `since`, counted here
+    so a week of log never has to cross SSH. Needs vLLM's request log (on by default)."""
+    cid = container(c)
+    if not cid:
+        return out({"counts": {}, "last": since})
+    since = ts_key(since) if since else None
+    cmd = ["docker", "logs", "--timestamps"] + (["--since", since] if since else []) + [cid]
+    counts, last = {}, since
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    try:
+        for line in p.stdout:
+            m = ACCESS_LINE.match(line)
+            if not m or m.group(3) not in COUNTED:
+                continue
+            ts = ts_key(m.group(1))
+            if since and ts <= since:
+                continue
+            h = counts.setdefault(ts[:13], {})
+            h[m.group(2)] = h.get(m.group(2), 0) + 1
+            last = max(last or ts, ts)
+    finally:
+        p.wait(timeout=120)
+    out({"counts": counts, "last": last})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -631,6 +667,11 @@ def main():
         download_stop()
     elif cmd == "garage":
         garage(args[0] if args and args[0].isdigit() else "8000")
+    elif cmd == "access":
+        since = args[0] if args else None
+        if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
+            return out({"error": "invalid time"})
+        access(c, since)
     elif cmd == "panel-state":
         panel_state()
     elif cmd == "version":

@@ -68,7 +68,7 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy** |
 | | **Models** | The model library: one card per model with **Deploy**, your own templates (also from a docker compose file), and the models on disk |
 | | **API** | The API addresses, model name and key, and examples for curl, Python and OpenCode |
-| | **Usage** | Input and output tokens, requests and energy per day and week, and tokens per kWh |
+| | **Usage** | Input and output tokens, requests and energy per day and week; output tokens per kWh under load and the idle draw; and who sent the requests (GarageAI, this machine, other clients) |
 | | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
 | **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the panel writes |
 
@@ -281,6 +281,14 @@ OpenAI-compatible, so most tools work with those three values.
 per kWh. The panel reads vLLM's token counters and each node's GPU power every poll and keeps
 them per hour in `/data/stats.db` (SQLite). The GPU reading leaves out CPU, memory, network and
 disks; set **Other power per node** under **Settings**, from a wall meter, to count the whole box.
+
+Tokens per kWh is shown **under load**: only the hours when the GPUs drew clearly more than at rest
+(at least 1.4 × the idle draw, with output). Idle hours would otherwise drown the number, so this is
+the one to compare models and machines by; the all-hours figure and the idle draw in watts are next
+to it. **Who used it** counts API requests per client from vLLM's request log on the head (the agent
+counts them, from the start of the running container's log): requests that came through GarageAI
+Bridge's tunnel, from this machine, from the local network or Docker, and from other addresses.
+vLLM doesn't say which client tokens belong to, so this part is requests only.
 
 ## Deploying a model, and changing it later
 

@@ -4,6 +4,10 @@ vLLM Panel (formerly vllmapp): a panel to set up, run and monitor vLLM on one or
 Versions follow `APP_VERSION` in `app/main.py`. "Agent vN" is the SSH agent on the nodes: after an
 upgrade that names a new agent, install it again under **Nodes**.
 
+## 1.29.0 — 2026-10-30 (agent v15)
+- **Tokens per kWh under load.** Usage shows output tokens per kWh over the hours when the GPUs actually worked (at least 1.4 × the idle draw, with output), with the idle draw in watts and the all-hours figure next to it. Idle hours used to drown the number.
+- **Who used it.** A new card on Usage counts API requests per client from vLLM's request log on the head: GarageAI (through Bridge's tunnel), this machine, the local network or Docker, and other addresses, with each one's share. The agent counts them on the head; the first read covers the running container's whole log.
+
 ## 1.28.3 — 2026-10-18
 - The Logs page also hides `GET /api/version`, the Ollama check that GarageAI Bridge's heartbeat makes every 5 minutes (a 404 on vLLM, harmless).
 

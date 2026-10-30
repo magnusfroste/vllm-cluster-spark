@@ -9,6 +9,7 @@ import difflib
 import hashlib
 import hmac
 import json
+import ipaddress
 import os
 import re
 import secrets
@@ -35,7 +36,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.28.3"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.29.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -740,7 +741,66 @@ def stats_db():
         hour INTEGER, model TEXT, prompt INTEGER DEFAULT 0, cached INTEGER DEFAULT 0,
         gen INTEGER DEFAULT 0, requests INTEGER DEFAULT 0, gpu_wh REAL DEFAULT 0,
         extra_wh REAL DEFAULT 0, PRIMARY KEY (hour, model))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS sources (
+        hour INTEGER, client TEXT, requests INTEGER DEFAULT 0, PRIMARY KEY (hour, client))""")
     return db
+
+
+_access = {"ts": 0, "error": None}
+
+
+def record_sources():
+    """API requests per client address and hour, from vLLM's request log on the head (the agent counts
+    them). At most once a minute; the first time it reads the whole log of the running container."""
+    if now() - _access["ts"] < 60 or not NODES:
+        return
+    _access["ts"] = now()
+    st = load_state()
+    since = st.get("access_since")
+    rc, res, err = ssh(HEAD_HOST, "access" + (f" {since}" if since else ""), timeout=180)
+    if not res or "counts" not in res:
+        _access["error"] = "the agent on the head is older than v15" if "unknown command" in str((res or {}).get("error")) \
+            else redact(str((res or {}).get("error") or err))[-200:]
+        return
+    _access["error"] = None
+    db = stats_db()
+    with db:
+        for h, per in res["counts"].items():
+            hour = int(datetime.strptime(h, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc).timestamp())
+            for client, n in per.items():
+                db.execute("""INSERT INTO sources (hour, client, requests) VALUES (?, ?, ?) ON CONFLICT (hour, client)
+                    DO UPDATE SET requests = requests + excluded.requests""", (hour, client, int(n)))
+    db.close()
+    if res.get("last") and res["last"] != since:
+        st = load_state()
+        st["access_since"] = res["last"]
+        if not since:  # the first read: counting covers the log from here on
+            st["access_first"] = min(res["counts"]) + ":00:00Z" if res["counts"] else res["last"]
+        save_state(st)
+
+
+def own_address():
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return None
+
+
+def client_kind(ip):
+    """Who a client address is, as far as the panel can tell."""
+    if ip.startswith("10.66."):
+        return "garageai", "GarageAI (through Bridge's tunnel)"
+    if ip in ("127.0.0.1", "::1"):
+        return "local", "This machine (localhost)"
+    if ip == own_address():
+        return "panel", "This panel (Chat)"
+    try:
+        a = ipaddress.ip_address(ip)
+        if a.is_private:
+            return "lan", f"Local network or Docker ({ip})"
+    except ValueError:
+        pass
+    return "other", ip
 
 
 def vllm_counters():
@@ -990,6 +1050,7 @@ def poller():
             watch_health()
             deploy_when_ready()
             write_panel_state()
+            record_sources()
         except Exception as e:  # noqa: BLE001
             event(f"polling error: {e}", "error")
         time.sleep(POLL_SECONDS)
@@ -2021,10 +2082,16 @@ def api_usage(days: int = 90):
     db = stats_db()
     rows = db.execute("""SELECT hour, model, prompt, cached, gen, requests, gpu_wh, extra_wh
         FROM hourly WHERE hour >= ? ORDER BY hour""", (since,)).fetchall()
+    src = db.execute("SELECT hour, client, requests FROM sources WHERE hour >= ? ORDER BY hour", (since,)).fetchall()
     db.close()
     keys = ("hour", "model", "prompt", "cached", "gen", "requests", "gpu_wh", "extra_wh")
+    clients = {c: client_kind(c) for c in {r[1] for r in src}}
     return {"rows": [dict(zip(keys, r)) for r in rows], "extra_watts": ops()["extra_watts"],
-            "nodes": len(NODES)}
+            "nodes": len(NODES),
+            "sources": [{"hour": h, "client": c, "kind": clients[c][0], "label": clients[c][1], "requests": n}
+                        for h, c, n in src],
+            "sources_since": load_state().get("access_first"), "sources_error": _access["error"],
+            "access_log": ops()["access_log"]}
 
 
 _latest = {"ts": 0, "version": None}
