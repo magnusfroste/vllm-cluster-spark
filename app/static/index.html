@@ -476,6 +476,10 @@ ol.steps { margin: 10px 0 12px; padding-left: 20px; } ol.steps li { margin: 6px 
   </div>
   <div class="page" data-page="events">
     <div class="pagehead"><h1>Events</h1><span class="muted">What the app and the cluster did</span></div>
+  <section class="card" id="outagesCard">
+    <h2>Outages</h2>
+    <div id="outages" class="muted">Loading…</div>
+  </section>
   <section class="card">
     <div class="ev" id="events"></div>
   </section>
@@ -2030,6 +2034,21 @@ document.querySelectorAll("[data-by]").forEach(b => b.onclick = () => {
   usageBy = b.dataset.by; document.querySelectorAll("[data-by]").forEach(x => x.classList.toggle("on", x === b)); drawUsage(); });
 addEventListener("resize", () => drawUsage());
 loadUsage(); setInterval(loadUsage, 60000);
+
+async function loadOutages() {
+  const el = $("#outages"), d = await (await fetch("api/outages")).json();
+  const when = t => new Date(t * 1000).toLocaleString("en-GB", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"});
+  const long = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+  const notes = d.errors.map(e => `<p class="muted" style="font-size:12px">${esc(e)}</p>`).join("");
+  const av = `<p style="margin:0 0 10px">Available <b>${d.availability["7"]} %</b> over the last 7 days, <b>${d.availability["30"]} %</b> over 30.</p>`;
+  if (!d.outages.length) { el.innerHTML = av + `No outages in the last ${d.days} days.` + notes; return; }
+  const off = d.outages.some(o => o.stayed_off.length);
+  el.innerHTML = av + `<table class="t">${d.outages.slice(0, 15).map(o => `<tr><td>${esc(when(o.start))}</td><td style="text-align:right">${long(o.seconds)}</td>
+      <td>${o.clean ? "Restart or shutdown" : "Lost power or crashed"}${o.stayed_off.length ? `<span class="muted"> · ${esc(o.stayed_off.join(", "))} stayed off</span>` : ""}</td></tr>`).join("")}</table>
+    <p class="muted" style="font-size:12px;margin-top:8px">From each node's system log: the time a node was off, not the minutes the model then takes to load. "Lost power or crashed" means the log ends without a shutdown.${off
+      ? ` A node that stayed off needs someone to turn it on: set "Restore on AC Power Loss" to Power On in its BIOS.` : ""}</p>` + notes;
+}
+loadOutages(); setInterval(loadOutages, 300000);
 
 let M = null, pick = null;
 async function loadModels() {

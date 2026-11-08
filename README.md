@@ -68,6 +68,7 @@ what the panel sees. Hide it when you're done; a link at the bottom of Overview 
 | **Models** | **Deployment** | The model that runs: Redeploy and Stop, and tabs for Overview (API address, model name, KV cache, load), Configuration (GPU share, context, image, mp/ray, vLLM arguments) and Environment, each with **Save & Redeploy** |
 | | **Models** | The model library: one card per model with **Deploy**, your own templates (also from a docker compose file), and the models on disk |
 | | **API** | The API addresses, model name and key, and examples for curl, Python and OpenCode |
+| | **Events** | What the app and the cluster did; outages over the last 90 days (clean restart, or lost power or a crash) and availability over 7 and 30 days |
 | | **Usage** | Input and output tokens, requests and energy per day and week; output tokens per kWh under load and the idle draw; and who sent the requests (GarageAI, this machine, other clients) |
 | | **GarageAI** | Optional: connect the cluster to the GarageAI marketplace, and the tunnel and heartbeat status on the head |
 | **Admin** | **Settings** | Auto-recover, the reboot button, timeouts, the public URL, and a preview of the config the panel writes |

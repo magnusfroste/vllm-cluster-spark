@@ -36,7 +36,7 @@ def envbool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "ja")
 
 
-APP_VERSION = "1.29.0"  # bump on every release that changes the app; shown in the menu
+APP_VERSION = "1.30.0"  # bump on every release that changes the app; shown in the menu
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "magnusfroste/vllm-cluster-spark").strip()  # owner/name, for links and the update check
 UPDATE_HINT = os.environ.get("UPDATE_HINT", "").strip()  # how to update this install; install.sh sets it
@@ -2092,6 +2092,66 @@ def api_usage(days: int = 90):
                         for h, c, n in src],
             "sources_since": load_state().get("access_first"), "sources_error": _access["error"],
             "access_log": ops()["access_log"]}
+
+
+_outages = {"ts": 0, "data": None}
+OUTAGE_DAYS = 90
+LATE_NODE_S = 1800  # a node this much later than the first one back waited for someone to turn it on
+
+
+def merge_outages(gaps):
+    """Per-node gaps, merged into spells when the cluster was down: it needs every node."""
+    spells = []
+    for g in sorted(gaps, key=lambda g: g["start"]):
+        if spells and g["start"] <= spells[-1]["end"]:
+            spells[-1]["end"] = max(spells[-1]["end"], g["end"])
+            spells[-1]["gaps"].append(g)
+        else:
+            spells.append({"start": g["start"], "end": g["end"], "gaps": [g]})
+    out = []
+    for o in spells:
+        back = sorted(g["end"] for g in o["gaps"])
+        out.append({"start": o["start"], "end": o["end"], "seconds": o["end"] - o["start"],
+                    "clean": all(g["clean"] for g in o["gaps"]),
+                    "nodes": sorted(g["node"] for g in o["gaps"]),
+                    "stayed_off": sorted(g["node"] for g in o["gaps"] if not g["clean"]
+                                         and len(back) > 1 and g["end"] - back[0] >= LATE_NODE_S)})
+    return out
+
+
+def outages():
+    """When the nodes were off, from each node's journal. Read when asked, at most every five minutes."""
+    if _outages["data"] and now() - _outages["ts"] < 300:
+        return _outages["data"]
+    cutoff, gaps, errors, covered = now() - OUTAGE_DAYS * 86400, [], [], now()
+    with ThreadPoolExecutor(max_workers=max(1, len(NODES))) as ex:
+        replies = list(ex.map(lambda n: ssh(n["host"], "boots", timeout=60), NODES))
+    for n, (rc, res, err) in zip(NODES, replies):
+        if not res or "boots" not in res:
+            errors.append(f"{n['host']}: " + ("the agent is older than v16" if "unknown command" in str((res or {}).get("error"))
+                                              else redact(str((res or {}).get("error") or err))[-200:]))
+            continue
+        boots = sorted(res["boots"], key=lambda b: b["first"])
+        if boots:
+            covered = min(covered, boots[0]["first"])
+        for a, b in zip(boots, boots[1:]):
+            if b["first"] > a["last"] and b["first"] > cutoff:
+                gaps.append({"node": n["host"], "start": a["last"], "end": b["first"], "clean": a["clean"]})
+    spells = merge_outages(gaps)
+    window = {}
+    for days in (7, 30):
+        start = max(now() - days * 86400, covered)
+        down = sum(max(0, o["end"] - max(o["start"], start)) for o in spells)
+        window[str(days)] = round(100 * (1 - down / max(1, now() - start)), 2)
+    data = {"outages": spells[::-1], "availability": window, "errors": errors, "days": OUTAGE_DAYS}
+    if not errors:
+        _outages.update(ts=now(), data=data)
+    return data
+
+
+@app.get("/api/outages", dependencies=[Depends(auth)])
+def api_outages():
+    return outages()
 
 
 _latest = {"ts": 0, "version": None}

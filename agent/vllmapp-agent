@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "15"
+VERSION = "16"
 HOME = os.path.expanduser("~")
 CONF = os.path.join(HOME, ".config/vllmapp/agent.env")
 
@@ -618,6 +618,25 @@ def access(c, since):
     out({"counts": counts, "last": last})
 
 
+CLEAN_END = re.compile(r"Journal stopped|Reached target .*(Power-Off|Reboot|Shutdown|Halt)")
+
+
+def boots():
+    """This node's boots from the last 90 days, and whether each one ended with a shutdown in the journal."""
+    rc, so, se = run(["journalctl", "--list-boots", "-o", "json", "-q"], timeout=30)
+    if rc != 0:
+        return out({"error": (se or so)[-300:]})
+    cutoff = time.time() - 90 * 86400
+    res = []
+    for b in json.loads(so or "[]")[-60:]:
+        if b["last_entry"] / 1e6 < cutoff:
+            continue
+        _, tail, _ = run(["journalctl", "-b", b["boot_id"], "-n", "400", "-o", "cat", "-q", "--no-pager"], timeout=30)
+        res.append({"first": int(b["first_entry"] / 1e6), "last": int(b["last_entry"] / 1e6),
+                    "clean": bool(CLEAN_END.search(tail))})
+    out({"boots": res})
+
+
 def main():
     argv = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "") or " ".join(sys.argv[1:]))
     c = conf()
@@ -672,6 +691,8 @@ def main():
         if since and not re.match(r"^[0-9T:.\-Z+]+$", since):
             return out({"error": "invalid time"})
         access(c, since)
+    elif cmd == "boots":
+        boots()
     elif cmd == "panel-state":
         panel_state()
     elif cmd == "version":
